@@ -87,8 +87,8 @@ Deno.test("slugify: already-slug string is unchanged", () => {
   assertEquals(slugify("urban-shadows"), "urban-shadows");
 });
 
-Deno.test("slugify: empty string produces empty string", () => {
-  assertEquals(slugify(""), "");
+Deno.test("slugify: empty string produces fallback identifier", () => {
+  assertEquals(slugify(""), "unknown");
 });
 
 // ─── buildOpeningMessage ──────────────────────────────────────────────────────

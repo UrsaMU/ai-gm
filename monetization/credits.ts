@@ -66,17 +66,36 @@ export async function creditPlayer(
   return wallet.balance;
 }
 
+// Per-player spend queue — serialises concurrent spendCredits calls to prevent TOCTOU
+const _spendQueue = new Map<string, Promise<unknown>>();
+
 /**
  * Deduct credits from a player's wallet.
  * Returns `true` if successful, `false` if insufficient balance.
+ * Concurrent calls for the same player are serialised to prevent overdraft.
  */
-export async function spendCredits(
+export function spendCredits(
   playerId: string,
   amount: number,
   reason: LedgerReason,
   metadata?: Record<string, unknown>,
 ): Promise<boolean> {
-  if (amount <= 0) return true; // 0-cost features are always allowed
+  if (amount <= 0) return Promise.resolve(true); // 0-cost features are always allowed
+  // Chain onto any in-flight spend for this player so only one runs at a time
+  const gate = (_spendQueue.get(playerId) ?? Promise.resolve()).then(
+    () => _doSpend(playerId, amount, reason, metadata),
+  );
+  // Store without return value — a failed spend must not block future ops
+  _spendQueue.set(playerId, gate.catch(() => {}));
+  return gate;
+}
+
+async function _doSpend(
+  playerId: string,
+  amount: number,
+  reason: LedgerReason,
+  metadata?: Record<string, unknown>,
+): Promise<boolean> {
   const wallet = await getWallet(playerId);
   if (wallet.balance < amount) return false;
   wallet.balance -= amount;

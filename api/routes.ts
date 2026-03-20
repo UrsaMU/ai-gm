@@ -123,7 +123,7 @@ export async function handleGmRequest(
 
     const exchanges = (
       (await gmExchanges.all()) as IGMExchange[]
-    ).filter((e) => e.roomId === id || true) // all for now; filter by session in future
+    ).filter((e) => e.roomId === id)
       .sort((a, b) => a.timestamp - b.timestamp)
       .slice(0, 200);
 

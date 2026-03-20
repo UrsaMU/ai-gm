@@ -30,8 +30,12 @@ export async function createPersona(
   name: string,
   description?: string,
 ): Promise<IPersona> {
-  // Sanitise name: ASCII printable, max 40 chars
-  const safeName = name.replace(/[^\x20-\x7E]/g, "").slice(0, 40).trim();
+  // Sanitise name: strip ANSI CSI escape sequences then non-printable chars, max 40 chars
+  const safeName = name
+    .replace(/\x1b\[[0-9;]*[A-Za-z]/g, "") // strip ANSI CSI sequences (ESC[...m etc.)
+    .replace(/[^\x20-\x7E]/g, "")           // strip remaining non-printable ASCII
+    .slice(0, 40)
+    .trim();
   if (!safeName) throw new Error("Persona name must contain printable ASCII characters.");
 
   const persona: IPersona = {
