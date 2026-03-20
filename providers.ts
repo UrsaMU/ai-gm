@@ -39,6 +39,10 @@ export async function loadConfig(): Promise<IGMConfig> {
 export async function saveConfig(
   update: Partial<Omit<IGMConfig, "id">>,
 ): Promise<IGMConfig> {
+  // LOW-04: bound roundTimeoutSeconds to prevent timer-based DoS
+  if (update.roundTimeoutSeconds !== undefined) {
+    update.roundTimeoutSeconds = Math.max(30, Math.min(86400, update.roundTimeoutSeconds));
+  }
   const current = await loadConfig();
   const next: IGMConfig = {
     ...current,

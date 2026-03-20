@@ -60,7 +60,7 @@ async function extractPdf(filePath: string): Promise<string> {
 // Splits text on Markdown/plain-text headings first, then by character limit.
 // Produces overlapping chunks so context isn't lost at boundaries.
 
-function chunkText(text: string, sourceFile: string): Omit<ITextChunk, "chunkIndex">[] {
+export function chunkText(text: string, sourceFile: string): Omit<ITextChunk, "chunkIndex">[] {
   const sections = splitBySections(text);
   const chunks: Omit<ITextChunk, "chunkIndex">[] = [];
 
@@ -93,7 +93,7 @@ function chunkText(text: string, sourceFile: string): Omit<ITextChunk, "chunkInd
 
 const HEADING_RE = /^(#{1,3}\s+.+|[A-Z][A-Z ]{4,}:?\s*$)/m;
 
-function splitBySections(
+export function splitBySections(
   text: string,
 ): { heading?: string; body: string }[] {
   const lines = text.split("\n");

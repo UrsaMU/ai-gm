@@ -180,7 +180,13 @@ export async function commitSystem(
 
 // ─── Apply a resolution to the draft ─────────────────────────────────────────
 
-function applyResolution(
+// CRIT-03: explicit allowlist prevents prototype pollution via AI-generated field names
+const ALLOWED_DRAFT_FIELDS = new Set([
+  "gameName", "version", "tone", "adjudicationHint",
+  "missConsequenceHint", "coreRulesPrompt",
+]);
+
+export function applyResolution(
   job: IIngestionJob,
   item: IUncertainItem,
   value: unknown,
@@ -194,11 +200,15 @@ function applyResolution(
       job.draft.moveThresholds.partialSuccess = Number(value);
       break;
     case "stats":
-      job.draft.stats = String(value).split(",").map((s) => s.trim());
+      job.draft.stats = String(value).split(",").map((s) => s.trim()).filter(Boolean);
       break;
     default:
-      // Generic: try to set as top-level draft field
-      (job.draft as unknown as Record<string, unknown>)[item.field] = value;
+      // Only write fields on the explicit allowlist — no prototype pollution
+      if (ALLOWED_DRAFT_FIELDS.has(item.field)) {
+        (job.draft as unknown as Record<string, unknown>)[item.field] = value;
+      } else {
+        console.warn(`[GM ingestion] Rejected unknown field in applyResolution: "${item.field}"`);
+      }
   }
 }
 
@@ -233,6 +243,6 @@ async function saveJob(job: IIngestionJob): Promise<void> {
   await gmIngestionJobs.update({ id: job.id }, job);
 }
 
-function slugify(name: string): string {
+export function slugify(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }

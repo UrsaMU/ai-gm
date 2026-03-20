@@ -43,7 +43,7 @@ export async function synthesize(
 
 // ─── Merge extractions (vote on each field) ───────────────────────────────────
 
-interface MergedData {
+export interface MergedData {
   gameName?: string;
   stats: string[];
   categories: string[];
@@ -54,7 +54,7 @@ interface MergedData {
   tone?: string;
 }
 
-function mergeExtractions(extractions: IChunkExtraction[]): MergedData {
+export function mergeExtractions(extractions: IChunkExtraction[]): MergedData {
   const gameNames = extractions.flatMap((e) => e.gameName ? [e.gameName] : []);
   const allStats = extractions.flatMap((e) => e.stats ?? []);
   const allCategories = extractions.flatMap((e) => e.categories ?? []);
@@ -95,7 +95,7 @@ function mergeExtractions(extractions: IChunkExtraction[]): MergedData {
 
 // ─── Conflict detection ───────────────────────────────────────────────────────
 
-function findConflicts(
+export function findConflicts(
   extractions: IChunkExtraction[],
   _merged: MergedData,
 ): IUncertainItem[] {
@@ -209,7 +209,7 @@ function unique<T>(arr: T[]): T[] {
   return [...new Set(arr)];
 }
 
-function mostCommon<T>(arr: T[]): T | undefined {
+export function mostCommon<T>(arr: T[]): T | undefined {
   if (!arr.length) return undefined;
   const counts = new Map<string, number>();
   for (const v of arr) {

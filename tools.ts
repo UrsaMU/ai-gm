@@ -410,6 +410,12 @@ export const roll_dice = new DynamicStructuredTool({
 
 // ─── Wiki / Lore ──────────────────────────────────────────────────────────────
 
+// HIGH-03: wiki base URL is loaded from env/config — never from LLM tool arguments
+const WIKI_BASE = Deno.env.get("WIKI_BASE_URL") ?? "http://localhost:4201";
+
+// MED-04: allowlist pattern for slug/category — prevents path traversal in lore paths
+const SAFE_SLUG_RE = /^[a-z0-9-]+$/;
+
 export const search_wiki = new DynamicStructuredTool({
   name: "search_wiki",
   description:
@@ -417,16 +423,11 @@ export const search_wiki = new DynamicStructuredTool({
     "Use get_wiki_page to fetch full content.",
   schema: z.object({
     query: z.string().describe("Search terms"),
-    baseUrl: z
-      .string()
-      .optional()
-      .default("http://localhost:4201")
-      .describe("Wiki base URL"),
   }),
-  func: async ({ query, baseUrl = "http://localhost:4201" }) => {
+  func: async ({ query }) => {
     try {
       const res = await fetch(
-        `${baseUrl}/api/v1/wiki/search?q=${encodeURIComponent(query)}`,
+        `${WIKI_BASE}/api/v1/wiki/search?q=${encodeURIComponent(query)}`,
       );
       if (!res.ok) return `[Wiki search failed: ${res.status}]`;
       const data = (await res.json()) as unknown;
@@ -442,16 +443,11 @@ export const get_wiki_page = new DynamicStructuredTool({
   description: "Fetch the full text of a specific wiki page by its path.",
   schema: z.object({
     path: z.string().describe("Wiki page path (e.g. 'lore/factions/spire')"),
-    baseUrl: z
-      .string()
-      .optional()
-      .default("http://localhost:4201")
-      .describe("Wiki base URL"),
   }),
-  func: async ({ path, baseUrl = "http://localhost:4201" }) => {
+  func: async ({ path }) => {
     try {
       const res = await fetch(
-        `${baseUrl}/api/v1/wiki/${encodeURIComponent(path)}`,
+        `${WIKI_BASE}/api/v1/wiki/${encodeURIComponent(path)}`,
       );
       if (!res.ok) return `[Wiki page not found: "${path}"]`;
       const data = (await res.json()) as unknown;
@@ -471,27 +467,26 @@ export const store_lore = new DynamicStructuredTool({
   schema: z.object({
     slug: z
       .string()
+      .regex(SAFE_SLUG_RE, "slug must be lowercase alphanumeric with hyphens only")
       .describe("URL-safe slug (e.g. 'the-spire-history', 'vex-true-name')"),
     category: z
       .string()
+      .regex(SAFE_SLUG_RE, "category must be lowercase alphanumeric with hyphens only")
       .describe(
         "Lore category path segment (e.g. 'factions', 'locations', 'npcs')",
       ),
     title: z.string().describe("Human-readable title"),
     body: z.string().describe("Markdown body of the lore entry (ASCII only)"),
-    baseUrl: z
-      .string()
-      .optional()
-      .default("http://localhost:4201")
-      .describe("Wiki base URL"),
   }),
-  func: async (
-    { slug, category, title, body, baseUrl = "http://localhost:4201" },
-  ) => {
+  func: async ({ slug, category, title, body }) => {
+    // MED-04: double-check slug/category even though Zod validates at parse time
+    if (!SAFE_SLUG_RE.test(slug) || !SAFE_SLUG_RE.test(category)) {
+      return `[store_lore error: invalid slug or category — only lowercase alphanumeric and hyphens allowed]`;
+    }
     const path = `lore/${category}/${slug}`;
     const content = `---\ntitle: ${title}\n---\n\n${body}`;
     try {
-      const res = await fetch(`${baseUrl}/api/v1/wiki`, {
+      const res = await fetch(`${WIKI_BASE}/api/v1/wiki`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path, content }),

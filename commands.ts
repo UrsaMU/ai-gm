@@ -83,31 +83,26 @@ addCmd({
   pattern: /^\+gm$/i,
   exec: async (u: UC) => {
     const cfg = await loadConfig();
+    // LOW-01: non-staff see a minimal public view — no room/player surveillance data
+    if (!isStaff(u)) {
+      u.send(`${H}--- AI GM Status ---${N}\n  System: ${cfg.systemId}  Mode: ${cfg.mode}`);
+      return;
+    }
     const cached = sessionCache.isLoaded();
     const loadedAt = sessionCache.loadedAt();
-
     const lines = [
       `${H}--- AI GM Status ---${N}`,
       `  Model:     ${cfg.model}`,
       `  System:    ${cfg.systemId}`,
       `  Mode:      ${cfg.mode}`,
       `  Chaos:     ${cfg.chaosLevel}`,
-      `  Watched:   ${
-        cfg.watchedRooms.length ? cfg.watchedRooms.join(", ") : "(none)"
-      }`,
-      `  Ignored:   ${
-        cfg.ignoredPlayers.length ? cfg.ignoredPlayers.join(", ") : "(none)"
-      }`,
-      `  Cache:     ${
-        cached
-          ? `loaded (${
-            loadedAt ? new Date(loadedAt).toISOString() : "unknown"
-          })`
-          : "not loaded"
-      }`,
+      `  Watched:   ${cfg.watchedRooms.length ? cfg.watchedRooms.join(", ") : "(none)"}`,
+      `  Ignored:   ${cfg.ignoredPlayers.length ? cfg.ignoredPlayers.join(", ") : "(none)"}`,
+      `  Cache:     ${cached ? `loaded (${loadedAt ? new Date(loadedAt).toISOString() : "unknown"})` : "not loaded"}`,
       `  Autoframe: ${cfg.autoframe ? "on" : "off"}`,
       `  Greet:     ${cfg.greet ? "on" : "off"}`,
       `  Timeout:   ${cfg.roundTimeoutSeconds}s`,
+      `  BooksDir:  ${cfg.booksDir}`,
     ];
     u.send(lines.join("\n"));
   },
@@ -126,7 +121,9 @@ addCmd({
       return;
     }
     const cfg = await loadConfig();
-    u.send(`${H}--- GM Config ---${N}\n${JSON.stringify(cfg, null, 2)}`);
+    // HIGH-04: redact API key — never expose raw secrets in output
+    const display = { ...cfg, apiKey: cfg.apiKey ? "***set***" : "(not set)" };
+    u.send(`${H}--- GM Config ---${N}\n${JSON.stringify(display, null, 2)}`);
   },
 });
 
@@ -521,6 +518,11 @@ addCmd({
     "  Example: +gm/oracle/likely Does Vex know about the deal?",
   pattern: /^\+gm\/oracle(?:\/([a-z-]+))?\s+(.+)$/i,
   exec: (u: UC) => {
+    // HIGH-02: staff-only — oracle fires full LLM + tools, open to all = DoS + info leak
+    if (!isStaff(u)) {
+      u.send(`${H}+gm/oracle:${N}  Staff only.`);
+      return;
+    }
     const probability = (u.cmd.switches?.[0] ?? "50-50").toLowerCase();
     const question = u.cmd.args[0]?.trim();
     if (!question) {
@@ -613,6 +615,11 @@ addCmd({
     "  Example: +gm/move Go Aggro=9",
   pattern: /^\+gm\/move\s+(.+)=(\d+)$/i,
   exec: (u: UC) => {
+    // HIGH-02: staff-only — move adjudication fires full LLM + tools
+    if (!isStaff(u)) {
+      u.send(`${H}+gm/move:${N}  Staff only.`);
+      return;
+    }
     const moveName = u.cmd.args[0]?.trim();
     const total = parseInt(u.cmd.args[1] ?? "", 10);
     if (!moveName || isNaN(total)) {
@@ -641,13 +648,21 @@ addCmd({
       u.send(`${H}+gm/config/booksdir:${N}  Staff only.`);
       return;
     }
-    const path = u.cmd.args[1]?.trim();
-    if (!path) {
+    const rawPath = u.cmd.args[0]?.trim();
+    if (!rawPath) {
       u.send(`${H}+gm/config/booksdir:${N}  Usage: +gm/config/booksdir <path>`);
       return;
     }
-    await saveConfig({ booksDir: path });
-    u.send(`${H}+gm/config/booksdir:${N}  Books directory set to: ${path}`);
+    // CRIT-02: restrict to server root — no path traversal outside cwd
+    const { resolve } = await import("@std/path");
+    const serverRoot = Deno.cwd();
+    const resolved = resolve(rawPath);
+    if (!resolved.startsWith(serverRoot + "/") && resolved !== serverRoot) {
+      u.send(`${H}+gm/config/booksdir:${N}  Path must be within the server root (${serverRoot}).`);
+      return;
+    }
+    await saveConfig({ booksDir: resolved });
+    u.send(`${H}+gm/config/booksdir:${N}  Books directory set to: ${resolved}`);
   },
 });
 
@@ -667,10 +682,20 @@ addCmd({
       u.send(`${H}+gm/ingest:${N}  GM not initialised.`);
       return;
     }
+    // MED-01: prevent concurrent/rapid-fire ingestion runs
+    const active = await gmIngestionJobs.queryOne({
+      phase: { $in: ["queued", "extracting", "analyzing", "reviewing"] },
+    } as Parameters<typeof gmIngestionJobs.queryOne>[0]);
+    if (active) {
+      u.send(`${H}+gm/ingest:${N}  Ingestion already in progress (job: ${(active as { id: string }).id}).`);
+      return;
+    }
     u.send(`${H}+gm/ingest:${N}  Starting ingestion... check the AI-GM board for progress.`);
-    _ingestCallback().catch((err) =>
-      u.send(`${H}+gm/ingest:${N}  Error: ${err?.message ?? err}`)
-    );
+    // MED-06: log full error server-side; show generic message to avoid leaking internals
+    _ingestCallback().catch((err) => {
+      console.error("[GM ingest error]", err);
+      u.send(`${H}+gm/ingest:${N}  Ingestion failed. Check server logs for details.`);
+    });
   },
 });
 
@@ -695,7 +720,8 @@ addCmd({
     u.send(
       `${H}Job ${job.id}:${N} ${job.phase} | Files: ${job.files.join(", ")} | ` +
       `Items: ${resolved}/${job.uncertainItems.length} resolved` +
-      (job.error ? ` | Error: ${job.error}` : ""),
+      // MED-06: truncate error field — never expose stack traces or internal paths
+      (job.error ? ` | Error: ${String(job.error).split("\n")[0].slice(0, 200)}` : ""),
     );
   },
 });
@@ -778,6 +804,11 @@ addCmd({
     const job = await gmIngestionJobs.queryOne({ id: jobId });
     if (!job) {
       u.send(`${H}+gm/ingest/approve:${N}  Job not found: ${jobId}`);
+      return;
+    }
+    // LOW-05: only approvable when in review phase with a valid draft
+    if ((job as { phase: string }).phase !== "reviewing") {
+      u.send(`${H}+gm/ingest/approve:${N}  Job is not awaiting review (phase: ${(job as { phase: string }).phase}).`);
       return;
     }
     const result = await commitSystem(

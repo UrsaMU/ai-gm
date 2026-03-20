@@ -5,7 +5,7 @@
     ".": "./mod.ts"
   },
   "tasks": {
-    "test": "deno test --allow-all --unstable-kv --no-check",
+    "test": "deno test --allow-all --unstable-kv --no-check tests/",
     "check": "deno check mod.ts index.ts",
     "lint": "deno lint"
   },

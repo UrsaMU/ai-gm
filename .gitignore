@@ -1,5 +1,17 @@
+# Environment / secrets — never commit
 .env
 .env.*
+**/.env
+**/.env.*
+
+# Books folder (may contain proprietary PDFs)
+# Remove this line if you want to track your books/ folder
+# books/
+
+# Deno
 deno.lock
 *.log
+
+# Shadownet subdirectory
 shadownet/node_modules/
+shadownet/dist/

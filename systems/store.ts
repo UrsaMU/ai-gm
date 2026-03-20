@@ -1,11 +1,35 @@
 import { DBO } from "ursamu";
 import { registerStatSystem } from "ursamu";
+import { z } from "zod";
 import type { IGameSystem } from "./interface.ts";
 import { urbanShadowsSystem } from "./urban-shadows.ts";
 
+// MED-05: Zod schema validates DB-stored system records before deserializing.
+// Prevents a corrupted or tampered DB row from producing a partial/poisoned IGameSystem.
+const StoredGameSystemSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  version: z.string(),
+  source: z.literal("ingested"),
+  ingestedFrom: z.array(z.string()),
+  confidence: z.record(z.enum(["high", "uncertain"])),
+  coreRulesPrompt: z.string(),
+  moveThresholds: z.object({
+    fullSuccess: z.number(),
+    partialSuccess: z.number(),
+  }),
+  stats: z.array(z.string()),
+  adjudicationHint: z.string(),
+  hardMoves: z.array(z.string()),
+  softMoves: z.array(z.string()),
+  missConsequenceHint: z.string(),
+  categories: z.array(z.string()),
+  statsByCategory: z.record(z.array(z.string())),
+});
+
 // ─── Serialized form stored in DB ─────────────────────────────────────────────
 
-interface IStoredGameSystem {
+export interface IStoredGameSystem {
   id: string;
   name: string;
   version: string;
@@ -96,7 +120,15 @@ export async function saveCustomSystem(system: IGameSystem): Promise<void> {
 
 // ─── Deserialize stored JSON back into a runtime IGameSystem ──────────────────
 
-function deserializeSystem(s: IStoredGameSystem): IGameSystem {
+export function deserializeSystem(s: IStoredGameSystem): IGameSystem {
+  // MED-05: validate record shape before constructing live system object
+  const parsed = StoredGameSystemSchema.safeParse(s);
+  if (!parsed.success) {
+    throw new Error(
+      `[GM] Stored game system "${s?.id ?? "??"}" failed validation: ${parsed.error.message}`,
+    );
+  }
+  s = parsed.data;
   return {
     id: s.id,
     name: s.name,
@@ -125,7 +157,7 @@ function deserializeSystem(s: IStoredGameSystem): IGameSystem {
       actor[stat.toLowerCase()] = value;
     },
     validate: (stat: string, value: unknown) => {
-      if (!s.stats.includes(stat)) return `Unknown stat: ${stat}`;
+      if (!s.stats.includes(stat)) return false;
       return typeof value === "number" && value >= 0;
     },
     // Ingested systems use generic formatters — game admins can refine via setup chat
