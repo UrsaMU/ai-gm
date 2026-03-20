@@ -35,7 +35,7 @@ import {
 } from "./graphs/index.ts";
 import type { IGMConfig, IGMExchange } from "./schema.ts";
 import type { IInjectOptions } from "./context/injector.ts";
-import { getSystem } from "./systems/index.ts";
+import { getGameSystem as getSystem } from "./systems/index.ts";
 
 // ─── Hook context ─────────────────────────────────────────────────────────────
 

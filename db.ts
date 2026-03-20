@@ -14,3 +14,4 @@ export const gmExchanges = new DBO<IGMExchange>("server.gm.exchanges");
 export const gmMemory = new DBO<IGMMemory>("server.gm.memory");
 export const gmReveals = new DBO<IGMReveal>("server.gm.reveals");
 export const gmRounds = new DBO<IGMRound>("server.gm.rounds");
+// server.gm.custom_systems is managed by systems/store.ts

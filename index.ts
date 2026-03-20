@@ -14,6 +14,8 @@ interface IPlugin {
 import "./commands.ts";
 
 import { createModel, loadConfig } from "./providers.ts";
+import { loadCustomSystems } from "./systems/index.ts";
+import { seedBoards, registerJobBuckets } from "ursamu";
 import {
   buildAllGraphs,
   runMoveGraph,
@@ -35,7 +37,7 @@ import {
 } from "./round-manager.ts";
 import { sessionCache } from "./context/cache.ts";
 import { loadRoomContext } from "./context/loader.ts";
-import { getSystem } from "./systems/index.ts";
+import { getGameSystem as getSystem } from "./systems/index.ts";
 import { gmExchanges } from "./db.ts";
 import type { IGMExchange } from "./schema.ts";
 import { runPoseGraph } from "./graphs/pose.ts";
@@ -50,6 +52,11 @@ const gmPlugin: IPlugin = {
     "Urban Shadows AI Game Master -- agentic LangGraph + Gemini Flash GM assistant",
 
   init: async () => {
+    // Bootstrap
+    await loadCustomSystems();
+    await seedBoards(["AI-GM"]);
+    registerJobBuckets(["INGESTION", "GM-REVIEW"]);
+
     let config = await loadConfig();
     const model = createModel(config);
     const graphs = buildAllGraphs(model);

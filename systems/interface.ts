@@ -1,10 +1,13 @@
+import type { IStatSystem } from "ursamu";
 import type { ICharSheet } from "../context/loader.ts";
 
 // ─── IGameSystem — swappable RPG system knowledge ────────────────────────────
 //
-// Implement this interface to make the GM understand a different game system.
-// Register the implementation in systems/index.ts and switch with:
-//   +gm/config/system <systemId>
+// Extends IStatSystem (ursamu v1.5.7) with GM-specific fields.
+// Implement this to teach the GM a new game system — no code changes needed
+// for ingested systems; they are stored as JSON in server.gm.custom_systems.
+//
+// Switch active system with: +gm/config/system <systemId>
 
 export interface IMoveThresholds {
   fullSuccess: number; // 10+ in Urban Shadows
@@ -12,9 +15,11 @@ export interface IMoveThresholds {
   // below partialSuccess = miss (GM hard move + mark XP)
 }
 
-export interface IGameSystem {
+export interface IGameSystem extends IStatSystem {
+  // IStatSystem provides: name, version, getCategories, getStats,
+  //   getStat, setStat, validate
+
   id: string; // "urban-shadows"
-  name: string; // "Urban Shadows 2E"
 
   // Core rules injected verbatim into the GM system prompt
   coreRulesPrompt: string;
@@ -47,4 +52,9 @@ export interface IGameSystem {
 
   // What a "miss" means in this system (injected into move adjudication prompt)
   missConsequenceHint: string;
+
+  // Source metadata
+  source: "bundled" | "ingested";
+  ingestedFrom?: string[];
+  confidence?: Record<string, "high" | "uncertain">;
 }

@@ -126,9 +126,13 @@ function debtsDisplay(sheet: ICharSheetFull): string {
     .join("; ");
 }
 
+const STATS = ["blood", "heart", "mind", "spirit"] as const;
+
 export const urbanShadowsSystem: IGameSystem = {
   id: "urban-shadows",
   name: "Urban Shadows 2E",
+  version: "2.0.0",
+  source: "bundled",
 
   coreRulesPrompt: CORE_RULES,
 
@@ -137,7 +141,18 @@ export const urbanShadowsSystem: IGameSystem = {
     partialSuccess: 7,
   },
 
-  stats: ["blood", "heart", "mind", "spirit"] as const,
+  stats: STATS,
+
+  // IStatSystem methods
+  getCategories: () => ["Core"],
+  getStats: (cat?: string) => cat === "Core" || !cat ? [...STATS] : [],
+  getStat: (actor: Record<string, unknown>, stat: string) =>
+    actor[stat.toLowerCase()] ?? 0,
+  setStat: async (actor: Record<string, unknown>, stat: string, value: unknown) => {
+    actor[stat.toLowerCase()] = value;
+  },
+  validate: (_stat: string, value: unknown) =>
+    typeof value === "number" && value >= -3 && value <= 3,
 
   formatMoveResult(
     moveName: string,

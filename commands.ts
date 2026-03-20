@@ -6,6 +6,7 @@
 // +gm/config/apikey <key>  — set Google API key
 // +gm/config/mode <auto|hybrid> — set GM mode
 // +gm/config/chaos <1-9>   — set chaos factor
+// +gm/config/system <id>  — switch active game system
 // +gm/watch <roomId>       — add room to watched list
 // +gm/unwatch <roomId>     — remove room from watched list
 // +gm/ignore <playerId>    — add player to ignore list
@@ -24,6 +25,7 @@ import { sessionCache } from "./context/cache.ts";
 import { isValidChaosLevel, isValidMode } from "./schema.ts";
 import { gmSessions } from "./db.ts";
 import type { IGMSession } from "./schema.ts";
+import { getGameSystem, getGameSystemNames } from "./systems/index.ts";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -186,6 +188,33 @@ addCmd({
     }
     await saveConfig({ chaosLevel: n });
     u.send(`${H}+gm/config/chaos:${N}  Chaos level set to ${n}.`);
+  },
+});
+
+addCmd({
+  name: "+gm/config/system",
+  category: "GM",
+  help: "+gm/config/system <id>  --  Switch the active game system. Use +gm/config to list available systems.",
+  pattern: /^\+gm\/config\/system\s+(.+)$/i,
+  exec: async (u: UC) => {
+    if (!isStaff(u)) {
+      u.send(`${H}+gm/config/system:${N}  Staff only.`);
+      return;
+    }
+    const id = u.cmd.args[1]?.trim();
+    if (!id) {
+      const names = getGameSystemNames().join(", ");
+      u.send(`${H}+gm/config/system:${N}  Available systems: ${names}`);
+      return;
+    }
+    const sys = getGameSystem(id);
+    if (sys.id !== id) {
+      const names = getGameSystemNames().join(", ");
+      u.send(`${H}+gm/config/system:${N}  Unknown system "${id}". Available: ${names}`);
+      return;
+    }
+    await saveConfig({ systemId: id });
+    u.send(`${H}+gm/config/system:${N}  Active system set to: ${sys.name}`);
   },
 });
 

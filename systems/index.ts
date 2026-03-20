@@ -1,19 +1,5 @@
-// Transitional registry — code-only systems.
-// Phase 2 will add DB-stored systems via store.ts.
+// System registry — DB-stored ingested systems take precedence over bundled.
+// Call loadCustomSystems() in plugin init() to hydrate DB systems on startup.
 
-import type { IGameSystem } from "./interface.ts";
-import { urbanShadowsSystem } from "./urban-shadows.ts";
-
-const BUNDLED: ReadonlyMap<string, IGameSystem> = new Map([
-  ["urban-shadows", urbanShadowsSystem],
-]);
-
-export function getSystem(id: string): IGameSystem {
-  return BUNDLED.get(id) ?? urbanShadowsSystem;
-}
-
-export function listSystemIds(): string[] {
-  return [...BUNDLED.keys()];
-}
-
-export type { IGameSystem };
+export { getGameSystem, getGameSystemNames, registerGameSystem, loadCustomSystems, saveCustomSystem } from "./store.ts";
+export type { IGameSystem } from "./interface.ts";
