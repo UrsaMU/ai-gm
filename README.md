@@ -42,7 +42,7 @@ ursamu plugin install jsr:@ursamu/ai-gm
 
 ```bash
 # In your UrsaMU project directory
-git clone https://github.com/lcanady/ai-gm plugins/ai-gm
+git clone https://github.com/ursamu/ai-gm plugins/ai-gm
 ```
 
 Then add to your plugin loader — UrsaMU auto-discovers `index.ts` in each plugin directory.
