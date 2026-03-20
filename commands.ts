@@ -18,6 +18,14 @@
 // +gm/oracle <question>    — ask the GM oracle a yes/no question
 // +gm/move <move>=<total>  — adjudicate a completed move roll
 // +gm/scene/publish <text> — broadcast a GM narration draft to the current room
+// +gm/ingest              — manually trigger book ingestion
+// +gm/ingest/status       — show current ingestion job status
+// +gm/ingest/transcript <jobId> — export setup conversation
+// +gm/ingest/review <jobId>/<itemId>=<value> — resolve uncertain item
+// +gm/ingest/review <jobId>/<itemId>/skip    — accept AI suggestion
+// +gm/ingest/approve <jobId> — commit the system
+// +gm/ingest/reject  <jobId> — cancel ingestion
+// +gm/config/booksdir <path> — set books folder path
 
 import { addCmd } from "ursamu/app";
 import { loadConfig, saveConfig } from "./providers.ts";
@@ -26,6 +34,21 @@ import { isValidChaosLevel, isValidMode } from "./schema.ts";
 import { gmSessions } from "./db.ts";
 import type { IGMSession } from "./schema.ts";
 import { getGameSystem, getGameSystemNames } from "./systems/index.ts";
+import { gmIngestionJobs } from "./ingestion/db.ts";
+import { resolveItem, commitSystem } from "./ingestion/reviewer.ts";
+
+// ─── Ingest command callbacks (set by index.ts) ───────────────────────────────
+type IngestFn = () => Promise<void>;
+let _ingestCallback: IngestFn | null = null;
+export function registerIngestCallback(fn: IngestFn): void {
+  _ingestCallback = fn;
+}
+
+type ModelFactory = () => import("@langchain/google-genai").ChatGoogleGenerativeAI;
+let _modelFactory: ModelFactory | null = null;
+export function registerModelFactory(fn: ModelFactory): void {
+  _modelFactory = fn;
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -603,5 +626,186 @@ addCmd({
     const rid = roomId(u);
     u.send(`${H}[GM adjudicating ${moveName} (${total})...]${N}`);
     _moveCallback(u.me.id, moveName, total, rid);
+  },
+});
+
+// ─── +gm/config/booksdir ─────────────────────────────────────────────────────
+
+addCmd({
+  name: "+gm/config/booksdir",
+  category: "GM",
+  help: "+gm/config/booksdir <path>  --  Set the folder the GM watches for game book files.",
+  pattern: /^\+gm\/config\/booksdir\s+(.+)$/i,
+  exec: async (u: UC) => {
+    if (!isStaff(u)) {
+      u.send(`${H}+gm/config/booksdir:${N}  Staff only.`);
+      return;
+    }
+    const path = u.cmd.args[1]?.trim();
+    if (!path) {
+      u.send(`${H}+gm/config/booksdir:${N}  Usage: +gm/config/booksdir <path>`);
+      return;
+    }
+    await saveConfig({ booksDir: path });
+    u.send(`${H}+gm/config/booksdir:${N}  Books directory set to: ${path}`);
+  },
+});
+
+// ─── +gm/ingest ──────────────────────────────────────────────────────────────
+
+addCmd({
+  name: "+gm/ingest",
+  category: "GM",
+  help: "+gm/ingest  --  Manually trigger ingestion of all files in the books directory.",
+  pattern: /^\+gm\/ingest$/i,
+  exec: async (u: UC) => {
+    if (!isStaff(u)) {
+      u.send(`${H}+gm/ingest:${N}  Staff only.`);
+      return;
+    }
+    if (!_ingestCallback) {
+      u.send(`${H}+gm/ingest:${N}  GM not initialised.`);
+      return;
+    }
+    u.send(`${H}+gm/ingest:${N}  Starting ingestion... check the AI-GM board for progress.`);
+    _ingestCallback().catch((err) =>
+      u.send(`${H}+gm/ingest:${N}  Error: ${err?.message ?? err}`)
+    );
+  },
+});
+
+addCmd({
+  name: "+gm/ingest/status",
+  category: "GM",
+  help: "+gm/ingest/status  --  Show the current or most recent ingestion job status.",
+  pattern: /^\+gm\/ingest\/status$/i,
+  exec: async (u: UC) => {
+    if (!isStaff(u)) {
+      u.send(`${H}+gm/ingest/status:${N}  Staff only.`);
+      return;
+    }
+    const jobs = await gmIngestionJobs.all();
+    if (!jobs.length) {
+      u.send(`${H}+gm/ingest/status:${N}  No ingestion jobs found.`);
+      return;
+    }
+    const job = (jobs as unknown as { startedAt: string; id: string; phase: string; files: string[]; uncertainItems: { resolved: boolean }[]; error?: string }[])
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
+    const resolved = job.uncertainItems.filter((i) => i.resolved).length;
+    u.send(
+      `${H}Job ${job.id}:${N} ${job.phase} | Files: ${job.files.join(", ")} | ` +
+      `Items: ${resolved}/${job.uncertainItems.length} resolved` +
+      (job.error ? ` | Error: ${job.error}` : ""),
+    );
+  },
+});
+
+addCmd({
+  name: "+gm/ingest/transcript",
+  category: "GM",
+  help: "+gm/ingest/transcript <jobId>  --  Display the full setup conversation for an ingestion job.",
+  pattern: /^\+gm\/ingest\/transcript\s+(\S+)$/i,
+  exec: async (u: UC) => {
+    if (!isStaff(u)) {
+      u.send(`${H}+gm/ingest/transcript:${N}  Staff only.`);
+      return;
+    }
+    const jobId = u.cmd.args[1]?.trim();
+    const job = await gmIngestionJobs.queryOne({ id: jobId }) as { exchanges: { role: string; adminName?: string; message: string; timestamp: string }[] } | null;
+    if (!job) {
+      u.send(`${H}+gm/ingest/transcript:${N}  Job not found: ${jobId}`);
+      return;
+    }
+    if (!job.exchanges.length) {
+      u.send(`${H}+gm/ingest/transcript:${N}  No conversation recorded for this job.`);
+      return;
+    }
+    u.send(`${H}--- Ingestion Transcript: ${jobId} ---${N}`);
+    for (const ex of job.exchanges) {
+      const who = ex.role === "gm" ? "[GM]" : `[${ex.adminName ?? "Admin"}]`;
+      u.send(`${who} ${ex.message}`);
+    }
+  },
+});
+
+addCmd({
+  name: "+gm/ingest/review",
+  category: "GM",
+  help: "+gm/ingest/review <jobId>/<itemId>=<value>  --  Resolve an uncertain item.\n" +
+    "  Use /skip instead of =<value> to accept the AI suggestion.",
+  pattern: /^\+gm\/ingest\/review\s+(\S+)\/(\S+?)(?:=(.+)|\/skip)$/i,
+  exec: async (u: UC) => {
+    if (!isStaff(u)) {
+      u.send(`${H}+gm/ingest/review:${N}  Staff only.`);
+      return;
+    }
+    if (!_modelFactory) {
+      u.send(`${H}+gm/ingest/review:${N}  GM not initialised.`);
+      return;
+    }
+    const jobId = u.cmd.args[1]?.trim();
+    const itemId = u.cmd.args[2]?.trim();
+    const value = u.cmd.args[3]?.trim() ?? null; // null = skip
+    const job = await gmIngestionJobs.queryOne({ id: jobId });
+    if (!job) {
+      u.send(`${H}+gm/ingest/review:${N}  Job not found: ${jobId}`);
+      return;
+    }
+    const model = _modelFactory();
+    const reply = await resolveItem(
+      job as Parameters<typeof resolveItem>[0],
+      itemId,
+      value,
+      u.me.id,
+      u.me.name ?? "Admin",
+      model,
+    );
+    u.send(reply);
+  },
+});
+
+addCmd({
+  name: "+gm/ingest/approve",
+  category: "GM",
+  help: "+gm/ingest/approve <jobId>  --  Approve and activate the ingested game system.",
+  pattern: /^\+gm\/ingest\/approve\s+(\S+)$/i,
+  exec: async (u: UC) => {
+    if (!isStaff(u)) {
+      u.send(`${H}+gm/ingest/approve:${N}  Staff only.`);
+      return;
+    }
+    const jobId = u.cmd.args[1]?.trim();
+    const job = await gmIngestionJobs.queryOne({ id: jobId });
+    if (!job) {
+      u.send(`${H}+gm/ingest/approve:${N}  Job not found: ${jobId}`);
+      return;
+    }
+    const result = await commitSystem(
+      job as Parameters<typeof commitSystem>[0],
+      u.me.id,
+      u.me.name ?? "Admin",
+    );
+    u.send(result);
+  },
+});
+
+addCmd({
+  name: "+gm/ingest/reject",
+  category: "GM",
+  help: "+gm/ingest/reject <jobId>  --  Cancel an ingestion job.",
+  pattern: /^\+gm\/ingest\/reject\s+(\S+)$/i,
+  exec: async (u: UC) => {
+    if (!isStaff(u)) {
+      u.send(`${H}+gm/ingest/reject:${N}  Staff only.`);
+      return;
+    }
+    const jobId = u.cmd.args[1]?.trim();
+    const job = await gmIngestionJobs.queryOne({ id: jobId }) as { phase: string } | null;
+    if (!job) {
+      u.send(`${H}+gm/ingest/reject:${N}  Job not found: ${jobId}`);
+      return;
+    }
+    await gmIngestionJobs.update({ id: jobId }, { ...(job as object), phase: "failed", error: "Rejected by admin." } as unknown as import("./ingestion/schema.ts").IIngestionJob);
+    u.send(`${H}+gm/ingest/reject:${N}  Job ${jobId} cancelled.`);
   },
 });

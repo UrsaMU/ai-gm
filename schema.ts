@@ -30,6 +30,7 @@ export interface IGMConfig {
   autoPublishLore: boolean; // auto-publish lore entries on creation
   loreWebhookUrl?: string; // POST here when lore is published
   chaosLevel: number; // 1–9 (Mythic GME chaos factor)
+  booksDir: string; // folder to watch for game book files
   updatedAt: number;
 }
 
@@ -56,6 +57,7 @@ export const DEFAULT_CONFIG: IGMConfig = {
   roundTimeoutSeconds: 300,
   autoPublishLore: false,
   chaosLevel: 5,
+  booksDir: "./books",
   updatedAt: 0,
 };
 

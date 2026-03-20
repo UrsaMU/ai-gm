@@ -16,6 +16,9 @@ import "./commands.ts";
 import { createModel, loadConfig } from "./providers.ts";
 import { loadCustomSystems } from "./systems/index.ts";
 import { seedBoards, registerJobBuckets } from "ursamu";
+import { startWatcher } from "./ingestion/watcher.ts";
+import { runIngestionPipeline } from "./ingestion/pipeline.ts";
+import { registerIngestCallback, registerModelFactory } from "./commands.ts";
 import {
   buildAllGraphs,
   runMoveGraph,
@@ -287,6 +290,48 @@ const gmPlugin: IPlugin = {
 
     registerScenePublishCallback(async (roomId: string, message: string) => {
       await broadcast(roomId, message);
+    });
+
+    // ── Ingestion pipeline ──────────────────────────────────────────────────────
+
+    // Page all GOD/WIZARD-flagged players and post to AI-GM board
+    async function notifyAdmins(msg: string): Promise<void> {
+      const game = await mu();
+      game.broadcast(msg);
+    }
+
+    async function getAdminIds(): Promise<string[]> {
+      const admins = await dbojs.query({
+        $and: [{ "flags": { $regex: "GOD|WIZARD" } }, { type: "player" }],
+      });
+      return admins.map((a: { id: string }) => a.id);
+    }
+
+    const triggerIngestion = async () => {
+      const freshConfig = await loadConfig();
+      const freshModel = createModel(freshConfig);
+      const adminIds = await getAdminIds();
+      await runIngestionPipeline({
+        model: freshModel,
+        booksDir: freshConfig.booksDir,
+        adminIds,
+        notify: notifyAdmins,
+      });
+    };
+
+    registerIngestCallback(triggerIngestion);
+    registerModelFactory(() => createModel(config));
+
+    startWatcher(async () => {
+      const freshConfig = await loadConfig();
+      const freshModel = createModel(freshConfig);
+      const adminIds = await getAdminIds();
+      return {
+        model: freshModel,
+        booksDir: freshConfig.booksDir,
+        adminIds,
+        notify: notifyAdmins,
+      };
     });
 
     console.log("[GM] Plugin initialised.");
