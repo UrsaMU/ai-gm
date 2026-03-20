@@ -11,6 +11,7 @@ interface IPlugin {
   description: string;
   init: () => Promise<boolean>;
   _webhookHandler?: (req: Request) => Promise<Response>;
+  handleRequest?: (req: Request) => Promise<Response | null>;
 }
 import "./commands.ts";
 
@@ -33,12 +34,19 @@ import {
   registerOracleCallback,
   registerScenePublishCallback,
   registerPaymentAdapter,
+  registerSessionCloseCallback,
 } from "./commands.ts";
 import { createStripeAdapterFromEnv } from "./monetization/stripe/adapter.ts";
 import { nullPaymentAdapter } from "./monetization/null-adapter.ts";
 import { processWebhookEvent } from "./monetization/webhook.ts";
 import { gmWallets } from "./monetization/db.ts";
 import type { IPlayerWallet } from "./monetization/interface.ts";
+import { generateJournalEntry } from "./social/journal.ts";
+import { handleGmRequest } from "./api/routes.ts";
+import { creditPlayer } from "./monetization/credits.ts";
+import { postSessionEvent, postNarration, discordEnabled } from "./social/discord.ts";
+import { checkAutoSpotlight } from "./social/spotlight.ts";
+import { resolveDisplayName } from "./social/persona.ts";
 import {
   buildRoundSummary,
   closeRound,
@@ -211,7 +219,10 @@ const gmPlugin: IPlugin = {
         const playerMap = await getPlayersInRoom(roomId);
         const playerIds = [...playerMap.keys()];
         const opts = await buildOpts(roomId, playerIds);
-        const playerName = playerMap.get(playerId) ?? playerId;
+        const playerName = await resolveDisplayName(
+          playerId,
+          playerMap.get(playerId) ?? playerId,
+        );
 
         let output = "";
         try {
@@ -256,7 +267,10 @@ const gmPlugin: IPlugin = {
         const playerMap = await getPlayersInRoom(roomId);
         const playerIds = [...playerMap.keys()];
         const opts = await buildOpts(roomId, playerIds);
-        const playerName = playerMap.get(playerId) ?? playerId;
+        const playerName = await resolveDisplayName(
+          playerId,
+          playerMap.get(playerId) ?? playerId,
+        );
 
         let output = "";
         try {
@@ -290,6 +304,12 @@ const gmPlugin: IPlugin = {
             timestamp: Date.now(),
           } as unknown as Parameters<typeof gmExchanges.create>[0],
         );
+
+        // Auto-spotlight on exceptional rolls
+        await checkAutoSpotlight(playerId, playerName, moveName, total);
+
+        // Mirror narration to Discord
+        if (output && discordEnabled()) await postNarration(output);
       },
     );
 
@@ -297,6 +317,29 @@ const gmPlugin: IPlugin = {
 
     registerScenePublishCallback(async (roomId: string, message: string) => {
       await broadcast(roomId, message);
+      if (discordEnabled()) await postNarration(message);
+    });
+
+    // ── Session journal generation ────────────────────────────────────────────
+    // Triggered after session close: pull recent exchanges and summarize.
+
+    registerSessionCloseCallback(async (sessionId: string, sessionLabel: string) => {
+      if (discordEnabled()) await postSessionEvent(sessionLabel, "closed");
+      try {
+        const freshModel = createModel(await loadConfig());
+        const exchanges = (
+          (await gmExchanges.query(
+            {} as Parameters<typeof gmExchanges.query>[0],
+          )) as IGMExchange[]
+        ).filter((e) => e.timestamp > Date.now() - 24 * 60 * 60 * 1000); // last 24h
+        if (exchanges.length) {
+          const participants = [...new Set(exchanges.map((e) => e.playerId).filter(Boolean))] as string[];
+          await generateJournalEntry(freshModel, sessionLabel, sessionId, exchanges, participants);
+          console.log(`[GM] Journal entry generated for session "${sessionLabel}".`);
+        }
+      } catch (err) {
+        console.warn("[GM] Journal generation failed:", err);
+      }
     });
 
     // ── Ingestion pipeline ──────────────────────────────────────────────────────
@@ -374,6 +417,16 @@ const gmPlugin: IPlugin = {
         return new Response("Webhook error", { status: 400 });
       }
     };
+
+    // ── REST API handler (exposed for host server to route requests) ──────────
+    // The host can call gmPlugin.handleRequest(req) from its Deno.serve handler.
+
+    gmPlugin.handleRequest = (req: Request) =>
+      handleGmRequest(req, {
+        webhookHandler: gmPlugin._webhookHandler,
+        adminCreditGrantFn: (playerId, amount) =>
+          creditPlayer(playerId, amount, "admin_grant", { source: "rest-api" }),
+      });
 
     console.log("[GM] Plugin initialised.");
     return true;

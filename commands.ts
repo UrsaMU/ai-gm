@@ -39,6 +39,24 @@ import { resolveItem, commitSystem } from "./ingestion/reviewer.ts";
 import { getWallet, creditPlayer, getLedger } from "./monetization/credits.ts";
 import { getPlans, getPlan } from "./monetization/plans.ts";
 import type { IPaymentAdapter } from "./monetization/interface.ts";
+import {
+  getJournalEntries,
+  getJournalEntry,
+  formatJournalEntry,
+} from "./social/journal.ts";
+import {
+  getSpotlights,
+  recordSpotlight,
+  formatSpotlights,
+} from "./social/spotlight.ts";
+import {
+  createPersona,
+  activatePersona,
+  deactivatePersona,
+  deletePersona,
+  getPersonasForPlayer,
+  formatPersonas,
+} from "./social/persona.ts";
 
 // ─── Payment adapter (set by index.ts) ───────────────────────────────────────
 let _paymentAdapter: IPaymentAdapter | null = null;
@@ -51,6 +69,13 @@ type IngestFn = () => Promise<void>;
 let _ingestCallback: IngestFn | null = null;
 export function registerIngestCallback(fn: IngestFn): void {
   _ingestCallback = fn;
+}
+
+// ─── Session close callback (set by index.ts) ─────────────────────────────────
+type SessionCloseFn = (sessionId: string, sessionLabel: string) => Promise<void>;
+let _sessionCloseCallback: SessionCloseFn | null = null;
+export function registerSessionCloseCallback(fn: SessionCloseFn): void {
+  _sessionCloseCallback = fn;
 }
 
 type ModelFactory = () => import("@langchain/google-genai").ChatGoogleGenerativeAI;
@@ -433,6 +458,10 @@ addCmd({
           closedBy: u.me.id,
           closedByName: (u.me as { name?: string }).name ?? u.me.id,
         },
+      );
+      // Fire journal generation + Discord event (non-blocking)
+      _sessionCloseCallback?.(s.id, s.label).catch((e) =>
+        console.warn("[GM] Session close callback error:", e)
       );
     }
     u.send(`${H}+gm/session/close:${N}  Session closed.`);
@@ -1068,5 +1097,172 @@ addCmd({
     } catch {
       u.send(`${H}+gm/sub/cancel:${N}  Cancellation failed. Try again or contact an admin.`);
     }
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SOCIAL COMMANDS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── +gm/journal ──────────────────────────────────────────────────────────────
+
+addCmd({
+  name: "+gm/journal",
+  category: "GM",
+  help: "+gm/journal  --  List recent campaign journal entries.",
+  pattern: /^\+gm\/journal$/i,
+  exec: async (u: UC) => {
+    const entries = await getJournalEntries(5);
+    if (!entries.length) {
+      u.send(`${H}+gm/journal:${N}  No journal entries yet. Close a session to generate one.`);
+      return;
+    }
+    const lines = [`${H}--- Campaign Journal ---${N}`];
+    for (const e of entries) {
+      const date = new Date(e.createdAt).toISOString().slice(0, 10);
+      lines.push(`  ${e.id}  ${e.sessionLabel} (${date})`);
+    }
+    lines.push(``, `  Read with: +gm/journal/read <id>`);
+    u.send(lines.join("\n"));
+  },
+});
+
+addCmd({
+  name: "+gm/journal/read",
+  category: "GM",
+  help: "+gm/journal/read <id>  --  Display a journal entry.",
+  pattern: /^\+gm\/journal\/read\s+(\S+)$/i,
+  exec: async (u: UC) => {
+    const id = u.cmd.args[0]?.trim();
+    const entry = id ? await getJournalEntry(id) : null;
+    if (!entry) {
+      u.send(`${H}+gm/journal/read:${N}  Entry not found: ${id}`);
+      return;
+    }
+    u.send(formatJournalEntry(entry));
+  },
+});
+
+// ─── +gm/spotlight ────────────────────────────────────────────────────────────
+
+addCmd({
+  name: "+gm/spotlight",
+  category: "GM",
+  help: "+gm/spotlight [<playerId>]  --  Show spotlight moments (optionally for one player).",
+  pattern: /^\+gm\/spotlight(?:\s+(\S+))?$/i,
+  exec: async (u: UC) => {
+    const pid = u.cmd.args[0]?.trim();
+    const entries = await getSpotlights({ playerId: pid, limit: 10 });
+    u.send(
+      `${H}--- Spotlights${pid ? ` (${pid})` : ""} ---${N}\n` +
+      formatSpotlights(entries),
+    );
+  },
+});
+
+addCmd({
+  name: "+gm/spotlight/mark",
+  category: "GM",
+  help: "+gm/spotlight/mark <playerId> <description>  --  Staff: manually mark a spotlight moment.",
+  pattern: /^\+gm\/spotlight\/mark\s+(\S+)\s+(.+)$/i,
+  exec: async (u: UC) => {
+    if (!isStaff(u)) {
+      u.send(`${H}+gm/spotlight/mark:${N}  Staff only.`);
+      return;
+    }
+    const pid = u.cmd.args[0]?.trim();
+    const description = u.cmd.args[1]?.trim();
+    if (!pid || !description) {
+      u.send(`${H}+gm/spotlight/mark:${N}  Usage: +gm/spotlight/mark <playerId> <description>`);
+      return;
+    }
+    const entry = await recordSpotlight(pid, pid, description, "moment", {
+      createdBy: "staff",
+    });
+    u.send(`${H}+gm/spotlight/mark:${N}  Spotlight recorded (${entry.id}).`);
+  },
+});
+
+// ─── +gm/persona ──────────────────────────────────────────────────────────────
+
+addCmd({
+  name: "+gm/persona",
+  category: "GM",
+  help: "+gm/persona  --  List your registered personas.",
+  pattern: /^\+gm\/persona$/i,
+  exec: async (u: UC) => {
+    const personas = await getPersonasForPlayer(u.me.id);
+    u.send(
+      `${H}--- Personas: ${u.me.name ?? u.me.id} ---${N}\n` +
+      formatPersonas(personas) +
+      `\n\n  Create:   +gm/persona/new <name>` +
+      `\n  Activate: +gm/persona/use <id>` +
+      `\n  Clear:    +gm/persona/clear`,
+    );
+  },
+});
+
+addCmd({
+  name: "+gm/persona/new",
+  category: "GM",
+  help: "+gm/persona/new <name>[=<description>]  --  Register a new persona.",
+  pattern: /^\+gm\/persona\/new\s+(.+)$/i,
+  exec: async (u: UC) => {
+    const raw = u.cmd.args[0]?.trim() ?? "";
+    const [name, ...descParts] = raw.split("=");
+    const description = descParts.join("=").trim() || undefined;
+    if (!name.trim()) {
+      u.send(`${H}+gm/persona/new:${N}  Usage: +gm/persona/new <name>[=<description>]`);
+      return;
+    }
+    try {
+      const p = await createPersona(u.me.id, name.trim(), description);
+      u.send(`${H}+gm/persona/new:${N}  Persona "${p.name}" created (id: ${p.id}).`);
+    } catch (err) {
+      u.send(`${H}+gm/persona/new:${N}  ${(err as Error).message}`);
+    }
+  },
+});
+
+addCmd({
+  name: "+gm/persona/use",
+  category: "GM",
+  help: "+gm/persona/use <id>  --  Activate a persona (the GM will use this name).",
+  pattern: /^\+gm\/persona\/use\s+(\S+)$/i,
+  exec: async (u: UC) => {
+    const id = u.cmd.args[0]?.trim();
+    const p = id ? await activatePersona(u.me.id, id) : null;
+    if (!p) {
+      u.send(`${H}+gm/persona/use:${N}  Persona not found: ${id}`);
+      return;
+    }
+    u.send(`${H}+gm/persona/use:${N}  Now playing as "${p.name}".`);
+  },
+});
+
+addCmd({
+  name: "+gm/persona/clear",
+  category: "GM",
+  help: "+gm/persona/clear  --  Deactivate your current persona (revert to player name).",
+  pattern: /^\+gm\/persona\/clear$/i,
+  exec: async (u: UC) => {
+    await deactivatePersona(u.me.id);
+    u.send(`${H}+gm/persona/clear:${N}  Persona cleared.`);
+  },
+});
+
+addCmd({
+  name: "+gm/persona/delete",
+  category: "GM",
+  help: "+gm/persona/delete <id>  --  Delete a persona.",
+  pattern: /^\+gm\/persona\/delete\s+(\S+)$/i,
+  exec: async (u: UC) => {
+    const id = u.cmd.args[0]?.trim();
+    const ok = id ? await deletePersona(u.me.id, id) : false;
+    if (!ok) {
+      u.send(`${H}+gm/persona/delete:${N}  Persona not found: ${id}`);
+      return;
+    }
+    u.send(`${H}+gm/persona/delete:${N}  Persona deleted.`);
   },
 });
