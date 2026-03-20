@@ -1,0 +1,5 @@
+.env
+.env.*
+deno.lock
+*.log
+shadownet/node_modules/
