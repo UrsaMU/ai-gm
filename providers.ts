@@ -4,15 +4,15 @@ import type { IGMConfig } from "./schema.ts";
 // ─── Provider factory ─────────────────────────────────────────────────────────
 //
 // Returns a ChatGoogleGenerativeAI instance configured from IGMConfig.
-// API key is read from config first, then falls back to GOOGLE_API_KEY env.
+// API key is read exclusively from the GOOGLE_API_KEY environment variable.
+// Set it in your .env file — never store API keys in the database.
 
 export function createModel(config: IGMConfig): ChatGoogleGenerativeAI {
-  const apiKey = config.apiKey ?? Deno.env.get("GOOGLE_API_KEY") ?? "";
+  const apiKey = Deno.env.get("GOOGLE_API_KEY") ?? "";
 
   if (!apiKey) {
     throw new Error(
-      "GM: No Google API key configured. " +
-        "Set GOOGLE_API_KEY env or use +gm/config/apikey <key>.",
+      "GM: No Google API key found. Set GOOGLE_API_KEY in your .env file.",
     );
   }
 

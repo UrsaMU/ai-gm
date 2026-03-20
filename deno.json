@@ -10,6 +10,7 @@
     "lint": "deno lint"
   },
   "imports": {
+    "@std/dotenv": "jsr:@std/dotenv@^0.224.0",
     "ursamu": "jsr:@ursamu/ursamu@1.5.7",
     "ursamu/app": "jsr:@ursamu/ursamu@1.5.7/app",
     "ursamu/jobs": "jsr:@ursamu/ursamu@1.5.7/jobs",

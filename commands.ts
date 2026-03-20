@@ -155,8 +155,8 @@ addCmd({
       return;
     }
     const cfg = await loadConfig();
-    // HIGH-04: redact API key — never expose raw secrets in output
-    const display = { ...cfg, apiKey: cfg.apiKey ? "***set***" : "(not set)" };
+    const apiKeyStatus = Deno.env.get("GOOGLE_API_KEY") ? "***set***" : "(not set — add GOOGLE_API_KEY to .env)";
+    const display = { ...cfg, GOOGLE_API_KEY: apiKeyStatus };
     u.send(`${H}--- GM Config ---${N}\n${JSON.stringify(display, null, 2)}`);
   },
 });
@@ -179,27 +179,6 @@ addCmd({
     }
     await saveConfig({ model });
     u.send(`${H}+gm/config/model:${N}  Model set to: ${model}`);
-  },
-});
-
-addCmd({
-  name: "+gm/config/apikey",
-  category: "GM",
-  help:
-    "+gm/config/apikey <key>  --  Set the Google API key (stored in DB, overrides env).",
-  pattern: /^\+gm\/config\/apikey\s+(.+)$/i,
-  exec: async (u: UC) => {
-    if (!isStaff(u)) {
-      u.send(`${H}+gm/config/apikey:${N}  Staff only.`);
-      return;
-    }
-    const key = u.cmd.args[0]?.trim();
-    if (!key) {
-      u.send(`${H}+gm/config/apikey:${N}  Usage: +gm/config/apikey <key>`);
-      return;
-    }
-    await saveConfig({ apiKey: key });
-    u.send(`${H}+gm/config/apikey:${N}  API key saved.`);
   },
 });
 

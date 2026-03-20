@@ -2,6 +2,10 @@
 //
 // Wires up commands, LangGraph graphs, hook context, and callback bridges.
 
+// Load .env file if present — secrets (API keys, webhook secrets) must live
+// in .env, never in the database or in-game commands.
+import "@std/dotenv/load";
+
 import { dbojs, mu } from "ursamu";
 
 // Minimal plugin descriptor — ursamu does not export IPlugin from its public API

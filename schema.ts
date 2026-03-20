@@ -16,7 +16,6 @@ export interface IGMConfig {
   id: "singleton"; // only one config record
   provider: "google"; // only google for now
   model: string; // "gemini-2.0-flash-latest"
-  apiKey?: string; // overrides GOOGLE_API_KEY env if set
   temperature: number; // 0.0–1.0, default 0.8
   systemId: string; // "urban-shadows" — active game system
   mode: GMMode; // "auto" | "hybrid"

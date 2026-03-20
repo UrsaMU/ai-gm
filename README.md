@@ -53,29 +53,23 @@ Then add to your plugin loader — UrsaMU auto-discovers `index.ts` in each plug
 
 ### Required
 
-Set your Google AI API key in one of two ways:
+All secrets are configured via a `.env` file. Copy the example and fill in your values:
 
-**Environment variable (recommended):**
 ```bash
-export GOOGLE_API_KEY=your-key-here
+cp .env.example .env
 ```
 
-**In-game command (stored in DB):**
-```
-+gm/config/apikey your-key-here
-```
+`.env` is gitignored — secrets never touch the database or in-game commands.
 
-### Optional environment variables
-
-| Variable | Purpose |
-|----------|---------|
-| `GOOGLE_API_KEY` | Google Gemini API key |
-| `STRIPE_SECRET_KEY` | Enable Stripe payments |
-| `STRIPE_WEBHOOK_SECRET` | Stripe webhook signature secret |
-| `DISCORD_WEBHOOK_URL` | Mirror GM output to Discord |
-| `GM_API_SECRET` | Bearer token for REST API (open in dev if unset) |
-| `GAME_URL` | Base URL for payment redirect links |
-| `WIKI_BASE_URL` | Base URL for wiki lore tools (default: `http://localhost:4201`) |
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `GOOGLE_API_KEY` | Yes | Google Gemini API key |
+| `STRIPE_SECRET_KEY` | No | Enable Stripe payments |
+| `STRIPE_WEBHOOK_SECRET` | No | Stripe webhook signature secret |
+| `DISCORD_WEBHOOK_URL` | No | Mirror GM output to Discord |
+| `GM_API_SECRET` | No | Bearer token for REST API (open in dev if unset) |
+| `GAME_URL` | No | Base URL for payment redirect links |
+| `WIKI_BASE_URL` | No | Base URL for wiki lore tools (default: `http://localhost:4201`) |
 
 ---
 
@@ -83,9 +77,7 @@ export GOOGLE_API_KEY=your-key-here
 
 ### 1. Set your API key
 
-```
-+gm/config/apikey AIza...
-```
+Copy `.env.example` to `.env` and set `GOOGLE_API_KEY`. The plugin loads `.env` automatically on startup.
 
 ### 2. Add game books
 
@@ -147,7 +139,6 @@ Or it activates automatically on the next `+gm/session/open`.
 | `+gm` | Show GM status |
 | `+gm/config` | Show full configuration |
 | `+gm/config/model <model>` | Set Gemini model |
-| `+gm/config/apikey <key>` | Set Google API key |
 | `+gm/config/mode <auto\|hybrid>` | GM response mode |
 | `+gm/config/chaos <1-9>` | Mythic GME chaos factor |
 | `+gm/config/system <id>` | Switch active game system |
