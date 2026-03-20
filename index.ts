@@ -10,6 +10,7 @@ interface IPlugin {
   version: string;
   description: string;
   init: () => Promise<boolean>;
+  _webhookHandler?: (req: Request) => Promise<Response>;
 }
 import "./commands.ts";
 
@@ -31,7 +32,13 @@ import {
   registerMoveCallback,
   registerOracleCallback,
   registerScenePublishCallback,
+  registerPaymentAdapter,
 } from "./commands.ts";
+import { createStripeAdapterFromEnv } from "./monetization/stripe/adapter.ts";
+import { nullPaymentAdapter } from "./monetization/null-adapter.ts";
+import { processWebhookEvent } from "./monetization/webhook.ts";
+import { gmWallets } from "./monetization/db.ts";
+import type { IPlayerWallet } from "./monetization/interface.ts";
 import {
   buildRoundSummary,
   closeRound,
@@ -333,6 +340,40 @@ const gmPlugin: IPlugin = {
         notify: notifyAdmins,
       };
     });
+
+    // ── Payment adapter ──────────────────────────────────────────────────────
+
+    const stripeAdapter = createStripeAdapterFromEnv();
+    registerPaymentAdapter(stripeAdapter ?? nullPaymentAdapter);
+    if (stripeAdapter) {
+      console.log("[GM] Stripe payment adapter active.");
+    }
+
+    // ── Webhook handler (wired to REST route in Phase 6 api/routes.ts) ────────
+    // Exposed as a named export so the REST layer can call it without
+    // duplicating the business logic here.
+
+    gmPlugin._webhookHandler = async (req: Request): Promise<Response> => {
+      const adapter = stripeAdapter;
+      if (!adapter) return new Response("Payment not configured", { status: 503 });
+      const sig = req.headers.get("stripe-signature") ?? "";
+      const raw = new Uint8Array(await req.arrayBuffer());
+      try {
+        const event = await adapter.handleWebhook(raw, sig);
+        const resolvePlayer = async (customerId: string): Promise<string | null> => {
+          const wallets = await gmWallets.query(
+            {} as Parameters<typeof gmWallets.query>[0],
+          ) as IPlayerWallet[];
+          return wallets.find((w) => w.subscriptionId?.startsWith(customerId))
+            ?.playerId ?? null;
+        };
+        await processWebhookEvent(event, resolvePlayer);
+        return new Response("ok", { status: 200 });
+      } catch (err) {
+        console.error("[GM] Webhook error:", err);
+        return new Response("Webhook error", { status: 400 });
+      }
+    };
 
     console.log("[GM] Plugin initialised.");
     return true;

@@ -36,6 +36,15 @@ import type { IGMSession } from "./schema.ts";
 import { getGameSystem, getGameSystemNames } from "./systems/index.ts";
 import { gmIngestionJobs } from "./ingestion/db.ts";
 import { resolveItem, commitSystem } from "./ingestion/reviewer.ts";
+import { getWallet, creditPlayer, getLedger } from "./monetization/credits.ts";
+import { getPlans, getPlan } from "./monetization/plans.ts";
+import type { IPaymentAdapter } from "./monetization/interface.ts";
+
+// ─── Payment adapter (set by index.ts) ───────────────────────────────────────
+let _paymentAdapter: IPaymentAdapter | null = null;
+export function registerPaymentAdapter(adapter: IPaymentAdapter): void {
+  _paymentAdapter = adapter;
+}
 
 // ─── Ingest command callbacks (set by index.ts) ───────────────────────────────
 type IngestFn = () => Promise<void>;
@@ -838,5 +847,226 @@ addCmd({
     }
     await gmIngestionJobs.update({ id: jobId }, { ...(job as object), phase: "failed", error: "Rejected by admin." } as unknown as import("./ingestion/schema.ts").IIngestionJob);
     u.send(`${H}+gm/ingest/reject:${N}  Job ${jobId} cancelled.`);
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MONETIZATION COMMANDS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ─── +gm/credits ─────────────────────────────────────────────────────────────
+
+addCmd({
+  name: "+gm/credits",
+  category: "GM",
+  help: "+gm/credits  --  Show your current GM credit balance and recent history.",
+  pattern: /^\+gm\/credits$/i,
+  exec: async (u: UC) => {
+    const wallet = await getWallet(u.me.id);
+    const history = await getLedger(u.me.id, 5);
+    const lines = [
+      `${H}--- GM Credits: ${u.me.name ?? u.me.id} ---${N}`,
+      `  Balance:      ${wallet.balance} credit(s)`,
+      `  Total earned: ${wallet.totalEarned}`,
+      `  Total spent:  ${wallet.totalSpent}`,
+    ];
+    if (wallet.subscriptionPlan) {
+      lines.push(`  Plan:         ${wallet.subscriptionPlan} (${wallet.subscriptionStatus ?? "unknown"})`);
+    }
+    if (history.length) {
+      lines.push(``, `${H}Recent:${N}`);
+      for (const e of history) {
+        const sign = e.delta > 0 ? "+" : "";
+        const ts = new Date(e.createdAt).toISOString().slice(0, 10);
+        lines.push(`  ${ts}  ${sign}${e.delta}  ${e.reason}`);
+      }
+    }
+    lines.push(``, `  Buy more with: +gm/credits/buy <amount>`);
+    u.send(lines.join("\n"));
+  },
+});
+
+addCmd({
+  name: "+gm/credits/buy",
+  category: "GM",
+  help: "+gm/credits/buy <amount>  --  Purchase GM credits. Generates a payment link.",
+  pattern: /^\+gm\/credits\/buy\s+(\d+)$/i,
+  exec: async (u: UC) => {
+    if (!_paymentAdapter) {
+      u.send(`${H}+gm/credits/buy:${N}  Payment not configured on this server.`);
+      return;
+    }
+    const amount = parseInt(u.cmd.args[0] ?? "", 10);
+    if (isNaN(amount) || amount < 1 || amount > 10000) {
+      u.send(`${H}+gm/credits/buy:${N}  Amount must be 1–10000.`);
+      return;
+    }
+    const priceUsd = amount * 0.05; // $0.05 per credit default
+    try {
+      const result = await _paymentAdapter.createCreditCheckout(
+        u.me.id,
+        amount,
+        priceUsd,
+        `${Deno.env.get("GAME_URL") ?? "http://localhost:4200"}/credits/success`,
+        `${Deno.env.get("GAME_URL") ?? "http://localhost:4200"}/credits/cancel`,
+      );
+      u.send(
+        `${H}+gm/credits/buy:${N}  Visit this link to complete payment:\n  ${result.url}`,
+      );
+    } catch {
+      u.send(`${H}+gm/credits/buy:${N}  Payment system unavailable. Try again later.`);
+    }
+  },
+});
+
+addCmd({
+  name: "+gm/credits/grant",
+  category: "GM",
+  help: "+gm/credits/grant <playerId> <amount>  --  Staff: grant credits to a player.",
+  pattern: /^\+gm\/credits\/grant\s+(\S+)\s+(\d+)$/i,
+  exec: async (u: UC) => {
+    if (!isStaff(u)) {
+      u.send(`${H}+gm/credits/grant:${N}  Staff only.`);
+      return;
+    }
+    const pid = u.cmd.args[0]?.trim();
+    const amount = parseInt(u.cmd.args[1] ?? "", 10);
+    if (!pid || isNaN(amount) || amount < 1) {
+      u.send(`${H}+gm/credits/grant:${N}  Usage: +gm/credits/grant <playerId> <amount>`);
+      return;
+    }
+    const newBalance = await creditPlayer(pid, amount, "admin_grant", {
+      grantedBy: u.me.id,
+    });
+    u.send(
+      `${H}+gm/credits/grant:${N}  Granted ${amount} credit(s) to ${pid}. New balance: ${newBalance}.`,
+    );
+  },
+});
+
+// ─── +gm/sub ──────────────────────────────────────────────────────────────────
+
+addCmd({
+  name: "+gm/sub",
+  category: "GM",
+  help: "+gm/sub  --  Show your subscription status.",
+  pattern: /^\+gm\/sub$/i,
+  exec: async (u: UC) => {
+    const wallet = await getWallet(u.me.id);
+    if (!wallet.subscriptionPlan) {
+      u.send(
+        `${H}+gm/sub:${N}  No active subscription.\n` +
+        `  See plans with: +gm/sub/plans\n` +
+        `  Subscribe with: +gm/sub/start <planId>`,
+      );
+      return;
+    }
+    const plan = getPlan(wallet.subscriptionPlan);
+    u.send(
+      `${H}--- GM Subscription ---${N}\n` +
+      `  Plan:    ${plan?.name ?? wallet.subscriptionPlan}\n` +
+      `  Status:  ${wallet.subscriptionStatus ?? "unknown"}\n` +
+      `  Credits: ${wallet.balance} remaining\n` +
+      `  Cancel:  +gm/sub/cancel`,
+    );
+  },
+});
+
+addCmd({
+  name: "+gm/sub/plans",
+  category: "GM",
+  help: "+gm/sub/plans  --  List available subscription plans.",
+  pattern: /^\+gm\/sub\/plans$/i,
+  exec: (u: UC) => {
+    const plans = getPlans();
+    const lines = [`${H}--- GM Subscription Plans ---${N}`];
+    for (const p of plans) {
+      const price = p.priceUsd === 0 ? "Free" : `$${p.priceUsd.toFixed(2)}/mo`;
+      lines.push(
+        ``,
+        `${H}${p.name}${N} (id: ${p.id})  ${price}`,
+        `  ${p.description}`,
+        `  ${p.creditsPerMonth} credits/month`,
+        `  Features: ${p.features.join(", ")}`,
+        `  Subscribe: +gm/sub/start ${p.id}`,
+      );
+    }
+    u.send(lines.join("\n"));
+  },
+});
+
+addCmd({
+  name: "+gm/sub/start",
+  category: "GM",
+  help: "+gm/sub/start <planId>  --  Start a subscription. Generates a payment link.",
+  pattern: /^\+gm\/sub\/start\s+(\S+)$/i,
+  exec: async (u: UC) => {
+    const planId = u.cmd.args[0]?.trim();
+    const plan = planId ? getPlan(planId) : undefined;
+    if (!plan) {
+      const ids = getPlans().map((p) => p.id).join(", ");
+      u.send(`${H}+gm/sub/start:${N}  Unknown plan. Available: ${ids}`);
+      return;
+    }
+    if (plan.priceUsd === 0) {
+      // Free tier — just grant credits
+      const wallet = await getWallet(u.me.id);
+      if (wallet.subscriptionPlan === plan.id) {
+        u.send(`${H}+gm/sub/start:${N}  You are already on the ${plan.name} plan.`);
+        return;
+      }
+      await creditPlayer(u.me.id, plan.creditsPerMonth, "subscription_renewal", {
+        planId: plan.id,
+      });
+      u.send(
+        `${H}+gm/sub/start:${N}  Enrolled in ${plan.name}. ` +
+        `${plan.creditsPerMonth} credits added to your balance.`,
+      );
+      return;
+    }
+    if (!_paymentAdapter) {
+      u.send(`${H}+gm/sub/start:${N}  Payment not configured on this server.`);
+      return;
+    }
+    try {
+      const result = await _paymentAdapter.createSubscriptionCheckout(
+        u.me.id,
+        plan,
+        `${Deno.env.get("GAME_URL") ?? "http://localhost:4200"}/sub/success`,
+        `${Deno.env.get("GAME_URL") ?? "http://localhost:4200"}/sub/cancel`,
+      );
+      u.send(
+        `${H}+gm/sub/start:${N}  Visit this link to subscribe to ${plan.name}:\n  ${result.url}`,
+      );
+    } catch {
+      u.send(`${H}+gm/sub/start:${N}  Payment system unavailable. Try again later.`);
+    }
+  },
+});
+
+addCmd({
+  name: "+gm/sub/cancel",
+  category: "GM",
+  help: "+gm/sub/cancel  --  Cancel your current subscription.",
+  pattern: /^\+gm\/sub\/cancel$/i,
+  exec: async (u: UC) => {
+    const wallet = await getWallet(u.me.id);
+    if (!wallet.subscriptionId) {
+      u.send(`${H}+gm/sub/cancel:${N}  No active subscription to cancel.`);
+      return;
+    }
+    if (!_paymentAdapter) {
+      u.send(`${H}+gm/sub/cancel:${N}  Payment not configured on this server.`);
+      return;
+    }
+    try {
+      await _paymentAdapter.cancelSubscription(wallet.subscriptionId);
+      u.send(
+        `${H}+gm/sub/cancel:${N}  Subscription cancelled. ` +
+        `Your remaining ${wallet.balance} credit(s) are still available.`,
+      );
+    } catch {
+      u.send(`${H}+gm/sub/cancel:${N}  Cancellation failed. Try again or contact an admin.`);
+    }
   },
 });
