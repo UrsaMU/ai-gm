@@ -16,7 +16,7 @@ Drop a folder of game books in. The AI reads them, asks you a few questions in-g
 | **Monetization** | Optional Stripe integration. Players earn credits, subscribe to plans, and spend credits on oracle queries and move adjudication. Works free by default. |
 | **Social Features** | AI-written campaign journal entries on session close, player spotlight tracking, multi-persona support, and Discord webhook mirroring. |
 | **REST API** | Full JSON API for a future web UI: sessions, journal, spotlights, wallets, plans, and a Stripe webhook endpoint. |
-| **Security Hardened** | All 19 findings from an OWASP Top 10 audit addressed: path traversal guards, prototype pollution prevention, prompt injection delimiters, secret redaction, and more. |
+| **Security Hardened** | Full OWASP Top 10 audit + follow-on code review: path traversal guards, prototype pollution prevention, prompt injection delimiters, secret redaction, targeted `send()` for private pages, and more. One tracked item (atomic array-append) pending engine support in [ursamu#57](https://github.com/UrsaMU/ursamu/issues/57). |
 
 ---
 
@@ -152,6 +152,15 @@ Or it activates automatically on the next `+gm/session/open`.
 | `+gm/session/close` | Close current session (auto-generates journal entry) |
 | `+gm/reload` | Invalidate context cache |
 
+### Room & Player Management *(staff only)*
+
+| Command | Description |
+|---------|-------------|
+| `+gm/watch` | Add current room to the GM watch list |
+| `+gm/unwatch` | Remove current room from the watch list |
+| `+gm/ignore <playerId>` | Stop the GM responding to a player |
+| `+gm/unignore <playerId>` | Restore GM responses for a player |
+
 ### GM Actions *(staff only)*
 
 | Command | Description |
@@ -228,7 +237,7 @@ Leave `GM_API_SECRET` unset to run open in development.
 ### Mounting in a Deno.serve host
 
 ```typescript
-import gmPlugin from "@ursamu/ai-gm";
+import gmPlugin from "jsr:@ursamu/ai-gm";
 
 await gmPlugin.init();
 
@@ -276,15 +285,25 @@ systems/
   urban-shadows.ts     ← Bundled default system
 
 graphs/
-  pose.ts              ← Round adjudication agent
-  oracle.ts            ← Yes/No oracle agent
-  move.ts              ← Move adjudication agent
-  downtime.ts          ← Downtime action agent
+  base.ts              ← Shared GMStateAnnotation + graph builder helpers
+  index.ts             ← Graph registry — buildAllGraphs(model)
+  pose.ts              ← Round adjudication (all players posed → narrate)
+  oracle.ts            ← Yes/No oracle with probability shading
+  move.ts              ← PbtA move roll adjudication
+  downtime.ts          ← Downtime action resolution
+  scene-page.ts        ← Scene orientation page on room entry
+  scene-set.ts         ← Vivid narration from player scene-set descriptions
+  job-review.ts        ← Pending staff job review
+  session.ts           ← End-of-session summaries
+  world-event.ts       ← Off-screen world event proposals
 
 monetization/
-  interface.ts         ← IPaymentAdapter, IPlayerWallet, plans
-  credits.ts           ← Immutable ledger + wallet mutations
-  gates.ts             ← Feature cost checks
+  interface.ts         ← IPaymentAdapter, IPlayerWallet, IFeatureCosts, plans
+  db.ts                ← DBO collections for wallets and ledger
+  credits.ts           ← Immutable ledger + TOCTOU-safe wallet mutations
+  gates.ts             ← Feature cost checks (checkGate / chargeGate)
+  plans.ts             ← Default subscription plan catalogue
+  null-adapter.ts      ← No-op adapter (default when Stripe is unconfigured)
   stripe/adapter.ts    ← Stripe Checkout + webhook handler
   webhook.ts           ← Maps Stripe events → credit/sub mutations
 
@@ -310,7 +329,7 @@ The LangGraph analyzer runs on every batch of chunks with structural `<book-text
 
 ## Security
 
-This plugin was developed with a full OWASP Top 10 security audit. Key mitigations:
+This plugin was developed with a full OWASP Top 10 security audit plus a follow-on code review. Key mitigations:
 
 - **Path traversal** — `booksDir` is resolved and validated against `Deno.cwd()`
 - **Prototype pollution** — `ALLOWED_DRAFT_FIELDS` allowlist on all dynamic field writes
@@ -320,6 +339,11 @@ This plugin was developed with a full OWASP Top 10 security audit. Key mitigatio
 - **Insecure randomness** — `crypto.getRandomValues()` with rejection sampling throughout
 - **DoS** — Concurrent ingestion guard; `roundTimeoutSeconds` bounded 30–86400; staff-only LLM commands
 - **Schema validation** — Zod validates all DB-loaded game system records before use
+- **Targeted pages** — Private GM pages use `send([playerId])` not broadcast; requires ursamu ≥ next release (adds `send` to public API)
+- **Phantom credits** — Webhook renewal skips when plan is unknown instead of granting a hardcoded fallback
+- **Concurrent spend** — `spendCredits` is serialised per-player via a promise queue to prevent overdraft
+
+**Known tracked item:** [ursamu#57](https://github.com/UrsaMU/ursamu/issues/57) — atomic `$push` needed for concurrent pose writes in `addPose()`.
 
 ---
 
@@ -336,7 +360,7 @@ deno task check
 deno task lint
 ```
 
-Tests live in `tests/` and cover the ingestion pipeline, reviewer, synthesizer, and system store (112 tests).
+Tests live in `tests/` and cover the ingestion pipeline, reviewer, synthesizer, and system store (126 tests).
 
 ---
 

@@ -6,7 +6,7 @@
 // in .env, never in the database or in-game commands.
 import "@std/dotenv/load";
 
-import { dbojs, mu } from "ursamu";
+import { dbojs, mu, send } from "ursamu";
 
 // Minimal plugin descriptor — ursamu does not export IPlugin from its public API
 interface IPlugin {
@@ -103,10 +103,10 @@ const gmPlugin: IPlugin = {
       return map;
     }
 
-    function page(_playerId: string, message: string): void {
-      mu()
-        .then((game) => game.broadcast(`[GM Page] ${message}`))
-        .catch(() => {});
+    function page(playerId: string, message: string): void {
+      try {
+        send([playerId], `[GM Page] ${message}`);
+      } catch {}
     }
 
     async function broadcast(roomId: string, message: string): Promise<void> {

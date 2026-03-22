@@ -234,7 +234,7 @@ addCmd({
       u.send(`${H}+gm/config/system:${N}  Staff only.`);
       return;
     }
-    const id = u.cmd.args[1]?.trim();
+    const id = u.cmd.args[0]?.trim();
     if (!id) {
       const names = getGameSystemNames().join(", ");
       u.send(`${H}+gm/config/system:${N}  Available systems: ${names}`);
@@ -540,8 +540,8 @@ addCmd({
       u.send(`${H}+gm/oracle:${N}  Staff only.`);
       return;
     }
-    const probability = (u.cmd.switches?.[0] ?? "50-50").toLowerCase();
-    const question = u.cmd.args[0]?.trim();
+    const probability = (u.cmd.args[0] ?? "50-50").toLowerCase();
+    const question = u.cmd.args[1]?.trim();
     if (!question) {
       u.send(`${H}+gm/oracle:${N}  Usage: +gm/oracle[/probability] <question>`);
       return;
@@ -753,7 +753,7 @@ addCmd({
       u.send(`${H}+gm/ingest/transcript:${N}  Staff only.`);
       return;
     }
-    const jobId = u.cmd.args[1]?.trim();
+    const jobId = u.cmd.args[0]?.trim();
     const job = await gmIngestionJobs.queryOne({ id: jobId }) as { exchanges: { role: string; adminName?: string; message: string; timestamp: string }[] } | null;
     if (!job) {
       u.send(`${H}+gm/ingest/transcript:${N}  Job not found: ${jobId}`);
@@ -786,9 +786,9 @@ addCmd({
       u.send(`${H}+gm/ingest/review:${N}  GM not initialised.`);
       return;
     }
-    const jobId = u.cmd.args[1]?.trim();
-    const itemId = u.cmd.args[2]?.trim();
-    const value = u.cmd.args[3]?.trim() ?? null; // null = skip
+    const jobId = u.cmd.args[0]?.trim();
+    const itemId = u.cmd.args[1]?.trim();
+    const value = u.cmd.args[2]?.trim() ?? null; // null = skip
     const job = await gmIngestionJobs.queryOne({ id: jobId });
     if (!job) {
       u.send(`${H}+gm/ingest/review:${N}  Job not found: ${jobId}`);
@@ -817,7 +817,7 @@ addCmd({
       u.send(`${H}+gm/ingest/approve:${N}  Staff only.`);
       return;
     }
-    const jobId = u.cmd.args[1]?.trim();
+    const jobId = u.cmd.args[0]?.trim();
     const job = await gmIngestionJobs.queryOne({ id: jobId });
     if (!job) {
       u.send(`${H}+gm/ingest/approve:${N}  Job not found: ${jobId}`);
@@ -847,7 +847,7 @@ addCmd({
       u.send(`${H}+gm/ingest/reject:${N}  Staff only.`);
       return;
     }
-    const jobId = u.cmd.args[1]?.trim();
+    const jobId = u.cmd.args[0]?.trim();
     const job = await gmIngestionJobs.queryOne({ id: jobId }) as { phase: string } | null;
     if (!job) {
       u.send(`${H}+gm/ingest/reject:${N}  Job not found: ${jobId}`);

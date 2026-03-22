@@ -4,7 +4,7 @@
 // Called by the REST route POST /api/gm/webhook.
 
 import type { IWebhookEvent } from "./interface.ts";
-import { creditPlayer, updateSubscriptionStatus } from "./credits.ts";
+import { creditPlayer, getWallet, updateSubscriptionStatus } from "./credits.ts";
 import { getPlan } from "./plans.ts";
 
 export async function processWebhookEvent(
@@ -24,15 +24,15 @@ export async function processWebhookEvent(
         );
         return;
       }
-      // Subscription renewal — grant monthly credits
+      // Subscription renewal — grant monthly credits only when plan is known.
+      // Silently skip when the plan cannot be resolved to prevent phantom credits.
       if (event.subscriptionId && event.customerId) {
         const playerId = await resolvePlayerIdFromCustomer(event.customerId);
         if (!playerId) return;
-        // Find plan from subscription metadata (best-effort)
-        // The plan id should have been stored on subscription creation
-        // If not findable, grant a default renewal allotment
-        const granted = 50; // fallback
-        await creditPlayer(playerId, granted, "subscription_renewal", {
+        const wallet = await getWallet(playerId);
+        const plan = wallet.subscriptionPlan ? getPlan(wallet.subscriptionPlan) : undefined;
+        if (!plan) return; // unknown plan — do not grant phantom credits
+        await creditPlayer(playerId, plan.creditsPerMonth, "subscription_renewal", {
           subscriptionId: event.subscriptionId,
         });
       }

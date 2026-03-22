@@ -121,9 +121,11 @@ export async function handleGmRequest(
     ) as IGMSession | null;
     if (!session) return notFound(`Session "${id}" not found.`);
 
+    // IGMExchange has no sessionId; approximate by timestamp window of the session.
+    const sessionEnd = session.closedAt ?? Date.now();
     const exchanges = (
       (await gmExchanges.all()) as IGMExchange[]
-    ).filter((e) => e.roomId === id)
+    ).filter((e) => e.timestamp >= session.openedAt && e.timestamp <= sessionEnd)
       .sort((a, b) => a.timestamp - b.timestamp)
       .slice(0, 200);
 

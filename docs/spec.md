@@ -1,7 +1,9 @@
 # ai-gm — Design Specification
 
-**Status:** Design Complete — Ready for Implementation **Date:** 2026-03-20
+**Status:** Implementation Complete (v0.1.0) | **Design date:** 2026-03-20 | **Updated:** 2026-03-21
 **Authors:** kumakun + Claude Code
+
+> **Note:** This is the original design specification. The implementation diverges from it in several places — see §12 (Implementation Notes) for a full list of what changed and why.
 
 ---
 
@@ -23,7 +25,7 @@
   - Notification: setup chat thread + auto-created AI-GM BBS board
   - REST API implemented now for future web UI
   - Flexible monetization: payment interface + Stripe adapter
-  - Builds against ursamu v1.5.7 (PR #42)
+  - Builds against ursamu v1.5.7 (released)
 - **Explicit non-goals:**
   - Web UI (REST routes make it ready; UI is a separate project)
   - Requiring code edits to support new game systems
@@ -35,7 +37,7 @@
 - PDF and text parsing happens server-side (Deno process)
 - The AI doing ingestion uses the same Gemini provider already configured
 - A "confident default" means the AI found clear, unambiguous text in the books
-- `IStatSystem` + `registerStatSystem()` from ursamu v1.5.7 (PR #42) are
+- `IStatSystem` + `registerStatSystem()` from ursamu v1.5.7 (released) are
   available
 - `seedBoards(["AI-GM"])` auto-creates the admin notification board in `init()`
 - `registerJobBuckets(["INGESTION", "GM-REVIEW"])` adds custom job queues
@@ -47,9 +49,9 @@
 - Payment interface ships with Stripe adapter; other processors are
   community-contributed
 - Channel history (#44) not yet in ursamu — ingestion transcript is self-managed
-  in DB; will migrate to channel history API when #44 lands
+  in `IIngestionExchange[]` on the job record; will migrate when #44 lands
 - Plugin discovery (#43) not yet in ursamu — installable via direct GitHub URL
-  until registry exists
+  or `jsr:@ursamu/ai-gm` until registry exists
 
 ---
 
@@ -510,4 +512,78 @@ All routes registered via `registerPluginRoute()` from ursamu v1.5.7.
 | In-game chat for setup (+ BBS board)          | Web UI wizard                | Works in existing client; web UI deferred                                 |
 | Stripe adapter with IPaymentAdapter interface | Stripe only / no payment     | Admin flexibility; community can add other processors                     |
 | Self-managed transcript in IIngestionJob      | Rely on channel history      | ursamu#44 not yet landed; will migrate when ready                         |
-| Build against ursamu v1.5.7 (PR #42)          | Wait for merge               | Our PR, our timeline                                                      |
+| Build against ursamu v1.5.7 (released)         | Wait for merge               | Shipped as planned                                                        |
+
+---
+
+## 12. Implementation Notes — Divergences from Spec
+
+This section records where the shipped implementation differs from the design above.
+
+### IPaymentAdapter interface (§6)
+
+The spec defined a stateful interface (`getBalance`, `addCredits`, `deductCredits`, `getSubscription`). The actual implementation uses a **stateless checkout/webhook model** instead — the adapter only creates Checkout sessions and parses webhooks; all wallet state lives in the plugin's own `IPlayerWallet` / ledger DBO collections.
+
+```typescript
+// Actual interface (monetization/interface.ts)
+interface IPaymentAdapter {
+  createCreditCheckout(playerId, credits, priceUsd, successUrl, cancelUrl): Promise<ICheckoutResult>;
+  createSubscriptionCheckout(playerId, plan, successUrl, cancelUrl): Promise<ICheckoutResult>;
+  cancelSubscription(subscriptionId): Promise<void>;
+  handleWebhook(rawBody: Uint8Array, signatureHeader: string): Promise<IWebhookEvent>;
+}
+```
+
+### Feature gates (§6)
+
+The spec's `IGMGates` (mode, activateScene, requiredTier, staffBypass) was replaced with `IFeatureCosts` — a simple per-feature credit cost table. Staff bypass is implicit (staff commands don't go through gates). Gate mode switching is not implemented; gates are always cost-based.
+
+```typescript
+interface IFeatureCosts {
+  oracle: number;           // default 1
+  move: number;             // default 1
+  roundAdjudication: number; // default 0 (free)
+  sceneFrame: number;       // default 0 (free)
+}
+```
+
+### Persona system (§7)
+
+The spec described **room/faction personas** (`+gm/persona/set <room>=<personaId>`). The implementation ships **player personas** instead: each player registers named alternates for themselves (`+gm/persona/new`, `+gm/persona/use`). The GM uses the player's active persona name in narration. Room-scoped personas are a future enhancement.
+
+### REST API path prefix (§9)
+
+All routes use `/api/gm/...` — the `/v1/` version segment was dropped to keep paths short. The ingestion, game systems, and config PATCH/DELETE routes listed in §9 are **not yet implemented** — the REST layer covers sessions, journal, spotlights, wallets, plans, webhook, and admin credit grant only.
+
+### Commands not implemented from §10
+
+| Spec command | Status |
+|---|---|
+| `+gm/config/apikey <key>` | Removed — API key is `.env` only (security) |
+| `+gm/subscribe` | Renamed to `+gm/sub/start <planId>` |
+| `+gm/mystory` | Deferred |
+| `+gm/persona/set <room>=<id>` | Not implemented (player personas shipped instead) |
+| `+gm/persona/list` | Renamed to `+gm/persona` |
+
+### Commands added beyond spec
+
+| Command | Purpose |
+|---|---|
+| `+gm/watch` / `+gm/unwatch` | Add/remove current room from GM watch list |
+| `+gm/ignore` / `+gm/unignore` | Suppress GM responses for a specific player |
+| `+gm/config/booksdir <path>` | Set book folder path in-game (path-traversal guarded) |
+| `+gm/ingest/review <jobId>/<itemId>=<value>` | Resolve uncertain ingestion item |
+| `+gm/ingest/approve` / `reject` | Approve or cancel an ingestion job |
+| `+gm/credits/buy` / `grant` | Credit purchase and admin grant |
+| `+gm/sub`, `+gm/sub/plans`, `+gm/sub/start`, `+gm/sub/cancel` | Full subscription flow |
+| `+gm/spotlight/mark` | Staff: manually record a spotlight moment |
+| `+gm/persona/new`, `use`, `clear`, `delete` | Full player persona lifecycle |
+| `+gm/journal/read <id>` | Read a specific journal entry in-game |
+
+### PDF library
+
+The spec referenced `pdf-parse`. The actual implementation uses **`unpdf`** (npm:unpdf), which works with Deno's runtime without Node compatibility shims.
+
+### Open engine issue
+
+[ursamu#57](https://github.com/UrsaMU/ursamu/issues/57): `addPose()` in `round-manager.ts` does a read-modify-write on the contributions array. Two simultaneous poses can race. Requires a `$push` atomic op in `DBO.modify()` to fix properly.
