@@ -1,4 +1,4 @@
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import { assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import {
   deserializeSystem,
   getGameSystem,
@@ -247,6 +247,36 @@ Deno.test("deserializeSystem: formatCharacterContext includes character name", (
   const ctx = system.formatCharacterContext(sheet);
   assertStringIncludes(ctx, "Rook");
 });
+
+// ─── Security: charCollection Zod validation (Finding 3) ─────────────────────
+
+Deno.test("deserializeSystem: rejects hostile charCollection value via Zod", () => {
+  // Pre-patch this would succeed — Zod accepted any string.
+  // Post-patch the regex /^[a-z0-9]+(\.[a-z0-9]+)*$/ must reject it.
+  assertThrows(
+    () => deserializeSystem(makeStoredSystem({ charCollection: "../../../etc/passwd" })),
+    Error,
+  );
+});
+
+Deno.test("deserializeSystem: rejects charCollection with uppercase letters", () => {
+  assertThrows(
+    () => deserializeSystem(makeStoredSystem({ charCollection: "Shadowrun.Chars" })),
+    Error,
+  );
+});
+
+Deno.test("deserializeSystem: accepts valid charCollection value", () => {
+  const system = deserializeSystem(makeStoredSystem({ charCollection: "shadowrun.chars" }));
+  assertEquals(system.charCollection, "shadowrun.chars");
+});
+
+Deno.test("deserializeSystem: charCollection undefined is preserved as undefined", () => {
+  const system = deserializeSystem(makeStoredSystem());
+  assertEquals(system.charCollection, undefined);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 Deno.test("deserializeSystem: formatCharacterContext includes stat values from data", () => {
   const system = deserializeSystem(makeStoredSystem());

@@ -80,6 +80,16 @@ const gmPlugin: IPlugin = {
     registerJobBuckets(["INGESTION", "GM-REVIEW"]);
 
     let config = await loadConfig();
+
+    // Sync character collection to the live cache.
+    // Priority: persisted config value → active system's declared collection → default.
+    {
+      const activeSystem = getSystem(config.systemId);
+      const col = config.charCollection
+        ?? activeSystem.charCollection
+        ?? "server.playbooks";
+      sessionCache.setCharCollection(col);
+    }
     const model = createModel(config);
     const graphs = buildAllGraphs(model);
 

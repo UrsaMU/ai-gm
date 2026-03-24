@@ -7,6 +7,7 @@
 // +gm/config/mode <auto|hybrid> — set GM mode
 // +gm/config/chaos <1-9>   — set chaos factor
 // +gm/config/system <id>  — switch active game system
+// +gm/config/chars <collection> — set character sheet DBO collection
 // +gm/watch <roomId>       — add room to watched list
 // +gm/unwatch <roomId>     — remove room from watched list
 // +gm/ignore <playerId>    — add player to ignore list
@@ -246,8 +247,62 @@ addCmd({
       u.send(`${H}+gm/config/system:${N}  Unknown system "${id}". Available: ${names}`);
       return;
     }
-    await saveConfig({ systemId: id });
-    u.send(`${H}+gm/config/system:${N}  Active system set to: ${sys.name}`);
+    // If the system declares a charCollection, adopt it automatically.
+    // Explicit +gm/config/chars overrides take precedence later if the admin sets one.
+    const configUpdate: { systemId: string; charCollection?: string } = { systemId: id };
+    if (sys.charCollection) {
+      configUpdate.charCollection = sys.charCollection;
+      sessionCache.setCharCollection(sys.charCollection);
+    }
+    await saveConfig(configUpdate);
+    const collectionNote = sys.charCollection
+      ? `  Character collection → ${sys.charCollection}`
+      : "";
+    u.send(`${H}+gm/config/system:${N}  Active system set to: ${sys.name}.${collectionNote}`);
+  },
+});
+
+// ─── +gm/config/chars ────────────────────────────────────────────────────────
+
+/**
+ * Validates a DBO collection name.
+ * Must be one or more lowercase alphanumeric segments separated by dots.
+ * Examples of valid names: "server.playbooks", "shadowrun.chars", "mygame.sheets"
+ */
+function isValidCollectionName(s: string): boolean {
+  return /^[a-z0-9]+(\.[a-z0-9]+)*$/.test(s);
+}
+
+addCmd({
+  name: "+gm/config/chars",
+  category: "GM",
+  help: `+gm/config/chars <collection>  --  Set the DBO collection the GM reads for character sheets.
+
+  <collection>   Dot-separated DBO name, e.g. shadowrun.chars or server.playbooks.
+                 Changes take effect immediately without a restart.
+
+Examples:
+  +gm/config/chars shadowrun.chars     Point GM at the Shadowrun character collection.
+  +gm/config/chars server.playbooks    Restore Urban Shadows default collection.`,
+  pattern: /^\+gm\/config\/chars\s+(.+)$/i,
+  exec: async (u: UC) => {
+    if (!isStaff(u)) {
+      u.send(`${H}+gm/config/chars:${N}  Staff only.`);
+      return;
+    }
+    const raw = u.cmd.args[0]?.trim().toLowerCase();
+    if (!raw) {
+      u.send(`${H}+gm/config/chars:${N}  Usage: +gm/config/chars <collection>`);
+      return;
+    }
+    if (!isValidCollectionName(raw)) {
+      u.send(`${H}+gm/config/chars:${N}  Invalid collection name. Use lowercase alphanumeric segments separated by dots (e.g. shadowrun.chars).`);
+      return;
+    }
+    await saveConfig({ charCollection: raw });
+    // Hot-swap the live cache — no restart needed.
+    sessionCache.setCharCollection(raw);
+    u.send(`${H}+gm/config/chars:${N}  Character collection set to: ${raw}`);
   },
 });
 

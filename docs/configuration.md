@@ -30,10 +30,46 @@ Runtime settings are stored in the DB and changed via in-game commands:
 +gm/config/mode <auto|hybrid>       — auto: responds every round; hybrid: staff-triggered
 +gm/config/chaos <1–9>              — Mythic GME chaos factor
 +gm/config/system <id>              — active game system (see game-systems.md)
++gm/config/chars <collection>       — DBO collection the GM reads for character sheets
 +gm/config/booksdir <path>          — folder the watcher monitors for game books
 ```
 
 Changes take effect immediately without a restart.
+
+### Character Sheet Collection
+
+The GM reads approved character sheets from a configurable DBO collection.
+The default is `server.playbooks` (Urban Shadows). Switch it to match your
+chargen plugin's collection:
+
+```
++gm/config/chars shadowrun.chars    — Shadowrun 4E (shadowrun-plugin)
++gm/config/chars server.playbooks   — Urban Shadows (default)
++gm/config/chars mygame.sheets      — any custom chargen plugin
+```
+
+Collection names must be lowercase alphanumeric segments separated by dots.
+
+When you switch game systems with `+gm/config/system`, the collection is
+updated automatically if the new system declares one. Use `+gm/config/chars`
+to override it explicitly.
+
+#### Custom chargen plugin contract
+
+For the GM to read your character sheets correctly, each record in your
+collection must include:
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `id` | `string` | Record ID |
+| `playerId` | `string` | Owner's UrsaMU player ID |
+| `name` | `string` | Character display name |
+| `status` **or** `chargenState` | `string` | Must be `"approved"` to be visible to the GM |
+| `attrs` | `Record<string, number>` | **SR4-style** named attributes (Body, Agility, …) |
+| `data` | `Record<string, unknown>` | **Generic-style** flat stat map |
+
+Exactly one of `attrs` or `data` is needed. If neither is present the GM uses
+a generic formatter that renders all top-level scalar fields.
 
 ## Watched Rooms
 

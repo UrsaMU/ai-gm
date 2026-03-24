@@ -25,7 +25,7 @@ const StoredGameSystemSchema = z.object({
   missConsequenceHint: z.string(),
   categories: z.array(z.string()),
   statsByCategory: z.record(z.array(z.string())),
-  charCollection: z.string().optional(),
+  charCollection: z.string().regex(/^[a-z0-9]+(\.[a-z0-9]+)*$/).optional(),
 });
 
 // ─── Serialized form stored in DB ─────────────────────────────────────────────

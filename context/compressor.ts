@@ -134,6 +134,39 @@ function formatSr4CharOneLiner(c: ISr4CharSheet): string {
   return `${c.name} (${c.metatype ?? "Human"}) — phys ${physFilled}/${physMax}  stun ${stunFilled}/${stunMax}`;
 }
 
+// ─── Generic fallback for unrecognised char shapes ────────────────────────────
+// Renders all top-level scalar (string/number/boolean) fields, skipping
+// infrastructure fields that carry no narrative value for the GM.
+
+const INFRA_FIELDS = new Set([
+  "id", "playerId", "_id", "location", "contents", "flags",
+  "state", "createdAt", "updatedAt",
+]);
+
+function formatGenericCharFull(c: ICharSheet): string {
+  const lines = [`${c.name}`];
+  for (const [k, v] of Object.entries(c)) {
+    if (INFRA_FIELDS.has(k)) continue;
+    if (k === "name") continue;
+    if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+      lines.push(`  ${k}: ${v}`);
+    } else if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+      // Flatten one level of nested objects (e.g. attrs, stats)
+      const pairs = Object.entries(v as Record<string, unknown>)
+        .filter(([, val]) => typeof val === "number" || typeof val === "string")
+        .map(([key, val]) => `${key} ${val}`)
+        .join("  ");
+      if (pairs) lines.push(`  ${k}: ${pairs}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function formatGenericCharOneLiner(c: ICharSheet): string {
+  const status = c.status ?? c.chargenState ?? "unknown";
+  return `${c.name} — status: ${status}`;
+}
+
 // Inline: render a clock as a filled/empty bar
 function clockBar(ticks: number, size: number): string {
   const filled = Math.min(ticks, size);
@@ -152,32 +185,47 @@ const THRESHOLDS = {
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 
+function isUrbanShadowsChar(c: ICharSheet): boolean {
+  const u = c as unknown as ICharSheetFull;
+  return typeof u.harm === "object" && u.harm !== null &&
+    Array.isArray(u.harm.boxes) &&
+    typeof u.corruption === "object" && u.corruption !== null &&
+    typeof u.stats === "object" && u.stats !== null &&
+    typeof u.circleStatus === "object" && u.circleStatus !== null &&
+    Array.isArray(u.debts) &&
+    Array.isArray(u.selectedMoves);
+}
+
 export function formatCharactersFull(
   chars: ICharSheet[],
   inRoomIds: string[],
 ): string {
   if (!chars.length) return "None.";
-  return chars
-    .filter((c) => inRoomIds.includes(c.playerId))
+  const inRoom = chars.filter((c) => inRoomIds.includes(c.playerId));
+  if (!inRoom.length) return "None.";
+  return inRoom
     .map((c) => {
-      if (isSr4Char(c)) return formatSr4CharFull(c, inRoomIds);
-      const u = c as unknown as ICharSheetFull;
-      const harmCount = markedHarmCount(u.harm);
-      const corrupt = u.corruption.marks;
-      const debts = u.debts.length
-        ? u.debts.map((d) =>
-          d.direction === "owed" ? `${d.to} owes them` : `owes ${d.to}`
-        ).join(", ")
-        : "none";
-      return [
-        `${u.name} (${u.playbookId})`,
-        `  Stats: blood ${u.stats.blood}  heart ${u.stats.heart}  mind ${u.stats.mind}  spirit ${u.stats.spirit}`,
-        `  Harm: ${harmCount}/5  Armor: ${u.harm.armor}  Corruption: ${corrupt}/5`,
-        `  Circles: mortalis ${u.circleStatus.mortalis}  night ${u.circleStatus.night}  power ${u.circleStatus.power}  wild ${u.circleStatus.wild}`,
-        `  Debts: ${debts}`,
-        `  Moves: ${u.selectedMoves.join(", ") || "none"}`,
-        `  XP: ${u.xp}/5`,
-      ].join("\n");
+      if (isSr4Char(c)) return formatSr4CharFull(c, [c.playerId]);
+      if (isUrbanShadowsChar(c)) {
+        const u = c as unknown as ICharSheetFull;
+        const harmCount = markedHarmCount(u.harm);
+        const corrupt = u.corruption.marks;
+        const debts = u.debts.length
+          ? u.debts.map((d) =>
+            d.direction === "owed" ? `${d.to} owes them` : `owes ${d.to}`
+          ).join(", ")
+          : "none";
+        return [
+          `${u.name} (${u.playbookId})`,
+          `  Stats: blood ${u.stats.blood}  heart ${u.stats.heart}  mind ${u.stats.mind}  spirit ${u.stats.spirit}`,
+          `  Harm: ${harmCount}/5  Armor: ${u.harm.armor}  Corruption: ${corrupt}/5`,
+          `  Circles: mortalis ${u.circleStatus.mortalis}  night ${u.circleStatus.night}  power ${u.circleStatus.power}  wild ${u.circleStatus.wild}`,
+          `  Debts: ${debts}`,
+          `  Moves: ${u.selectedMoves.join(", ") || "none"}`,
+          `  XP: ${u.xp}/5`,
+        ].join("\n");
+      }
+      return formatGenericCharFull(c);
     })
     .filter(Boolean)
     .join("\n\n");
@@ -188,9 +236,12 @@ export function formatCharactersOneLiner(chars: ICharSheet[]): string {
   return chars
     .map((c) => {
       if (isSr4Char(c)) return formatSr4CharOneLiner(c);
-      const u = c as unknown as ICharSheetFull;
-      const harmCount = markedHarmCount(u.harm);
-      return `${u.name} (${u.playbookId}) — harm ${harmCount}/5  corruption ${u.corruption.marks}/5`;
+      if (isUrbanShadowsChar(c)) {
+        const u = c as unknown as ICharSheetFull;
+        const harmCount = markedHarmCount(u.harm);
+        return `${u.name} (${u.playbookId}) — harm ${harmCount}/5  corruption ${u.corruption.marks}/5`;
+      }
+      return formatGenericCharOneLiner(c);
     })
     .join("\n");
 }
