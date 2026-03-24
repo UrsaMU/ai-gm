@@ -31,10 +31,18 @@ class SessionContextCache {
   private snapshot: ICacheEntry<ISessionSnapshot> | null = null;
   private lore: ICacheEntry<ILorePage[]> | null = null;
   private dirty: Set<CacheSection> = new Set();
+  private charCollection = "server.playbooks";
+
+  setCharCollection(collection: string): void {
+    if (this.charCollection !== collection) {
+      this.charCollection = collection;
+      this.invalidate("characters");
+    }
+  }
 
   async getSnapshot(): Promise<ISessionSnapshot> {
     if (!this.snapshot || this.dirty.has("all") || this.isDirtySome()) {
-      const fresh = await loadSessionSnapshot();
+      const fresh = await loadSessionSnapshot(this.charCollection);
       this.snapshot = { data: fresh, loadedAt: Date.now() };
       this.dirty.clear();
     }

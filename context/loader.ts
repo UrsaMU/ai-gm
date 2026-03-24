@@ -13,8 +13,13 @@ export interface ICharSheet {
   playerId: string;
   name: string;
   playbook?: string;
-  status: string;
-  data: Record<string, unknown>;
+  status?: string;
+  /** SR4: approval state stored here instead of status */
+  chargenState?: string;
+  /** Generic game systems store stats here */
+  data?: Record<string, unknown>;
+  /** SR4: stores named attributes (Body, Agility, etc.) */
+  attrs?: Record<string, number>;
   [key: string]: unknown;
 }
 
@@ -67,9 +72,9 @@ export interface IDowntimeAction {
 }
 
 // ─── DBO references (collection names match urban-shadows defaults) ───────────
-// Game admins can override collection names in IGMConfig if their game differs.
+// Character sheets collection is configurable via charCollection parameter.
+// Other collections remain at urban-shadows defaults.
 
-const sheets = new DBO<ICharSheet>("server.playbooks");
 const npcs = new DBO<INPC>("server.npcs");
 const orgs = new DBO<IOrg>("server.orgs");
 const fronts = new DBO<IFront>("server.fronts");
@@ -90,7 +95,10 @@ export interface ISessionSnapshot {
   loadedAt: number;
 }
 
-export async function loadSessionSnapshot(): Promise<ISessionSnapshot> {
+export async function loadSessionSnapshot(
+  charCollection = "server.playbooks",
+): Promise<ISessionSnapshot> {
+  const sheets = new DBO<ICharSheet>(charCollection);
   const [
     allChars,
     allNpcs,
@@ -112,7 +120,9 @@ export async function loadSessionSnapshot(): Promise<ISessionSnapshot> {
   ]);
 
   return {
-    characters: allChars.filter((c) => c.status === "approved"),
+    characters: allChars.filter((c) =>
+      c.status === "approved" || c.chargenState === "approved"
+    ),
     npcs: allNpcs,
     orgs: allOrgs,
     fronts: allFronts.filter((f) => f.status === "active"),

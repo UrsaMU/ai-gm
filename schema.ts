@@ -30,6 +30,7 @@ export interface IGMConfig {
   loreWebhookUrl?: string; // POST here when lore is published
   chaosLevel: number; // 1–9 (Mythic GME chaos factor)
   booksDir: string; // folder to watch for game book files
+  charCollection: string; // DBO collection for character sheets (default: "server.playbooks")
   updatedAt: number;
 }
 
@@ -57,6 +58,7 @@ export const DEFAULT_CONFIG: IGMConfig = {
   autoPublishLore: false,
   chaosLevel: 5,
   booksDir: "./books",
+  charCollection: "server.playbooks",
   updatedAt: 0,
 };
 

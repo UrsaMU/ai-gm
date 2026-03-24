@@ -457,6 +457,12 @@ export function registerHooks(ctx: IHookContext): void {
       // by the store from the serialized fields, so this is structurally safe.
       // deno-lint-ignore no-explicit-any
       registerGameSystem(system as any);
+      // If the system specifies its own character collection, point the cache at it.
+      const charCollection = (system as Record<string, unknown>).charCollection;
+      if (typeof charCollection === "string" && charCollection) {
+        sessionCache.setCharCollection(charCollection);
+        console.log(`[GM] Character collection switched to "${charCollection}" for system "${system.id}".`);
+      }
       console.log(`[GM] Game system "${system.id}" registered via gm:system:register.`);
     } catch (e: unknown) {
       console.error("[GM] gm:system:register failed:", e);

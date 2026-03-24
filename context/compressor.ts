@@ -81,6 +81,59 @@ function markedHarmCount(harm: IHarm): number {
   return harm.boxes.filter(Boolean).length;
 }
 
+// ─── SR4 character shape ──────────────────────────────────────────────────────
+
+interface ISr4CharSheet {
+  id: string;
+  playerId: string;
+  name: string;
+  metatype?: string;
+  attrs: Record<string, number>;
+  skills?: Record<string, { rating: number; spec?: string }>;
+  physicalDmg?: number;
+  stunDmg?: number;
+  karmaAvailable?: number;
+  [key: string]: unknown;
+}
+
+function isSr4Char(c: ICharSheet): c is ICharSheet & ISr4CharSheet {
+  return typeof (c as Record<string, unknown>)["attrs"] === "object" &&
+    (c as Record<string, unknown>)["attrs"] !== null;
+}
+
+function formatSr4CharFull(c: ISr4CharSheet, inRoomIds: string[]): string {
+  if (!inRoomIds.includes(c.playerId)) return "";
+  const a = c.attrs;
+  const body = a["Body"] ?? 0;
+  const willpower = a["Willpower"] ?? 0;
+  const physMax = Math.ceil(body / 2) + 8;
+  const stunMax = Math.ceil(willpower / 2) + 8;
+  const physFilled = c.physicalDmg ?? 0;
+  const stunFilled = c.stunDmg ?? 0;
+  const woundMod = -Math.floor((physFilled + stunFilled) / 3);
+  const topSkills = Object.entries(c.skills ?? {})
+    .sort((x, y) => y[1].rating - x[1].rating)
+    .slice(0, 6)
+    .map(([name, s]) => `${name} ${s.rating}${s.spec ? ` (${s.spec})` : ""}`)
+    .join("  ");
+  return [
+    `${c.name} (${c.metatype ?? "Human"})`,
+    `  Body ${a["Body"] ?? 0}  Agi ${a["Agility"] ?? 0}  Rea ${a["Reaction"] ?? 0}  Str ${a["Strength"] ?? 0}`,
+    `  Cha ${a["Charisma"] ?? 0}  Int ${a["Intuition"] ?? 0}  Log ${a["Logic"] ?? 0}  Wil ${a["Willpower"] ?? 0}  Edge ${a["Edge"] ?? 0}`,
+    `  Physical: ${physFilled}/${physMax}  Stun: ${stunFilled}/${stunMax}  Wound Mod: ${woundMod}`,
+    topSkills ? `  Skills: ${topSkills}` : "",
+    `  Karma: ${c.karmaAvailable ?? 0} available`,
+  ].filter(Boolean).join("\n");
+}
+
+function formatSr4CharOneLiner(c: ISr4CharSheet): string {
+  const physMax = Math.ceil((c.attrs["Body"] ?? 0) / 2) + 8;
+  const stunMax = Math.ceil((c.attrs["Willpower"] ?? 0) / 2) + 8;
+  const physFilled = c.physicalDmg ?? 0;
+  const stunFilled = c.stunDmg ?? 0;
+  return `${c.name} (${c.metatype ?? "Human"}) — phys ${physFilled}/${physMax}  stun ${stunFilled}/${stunMax}`;
+}
+
 // Inline: render a clock as a filled/empty bar
 function clockBar(ticks: number, size: number): string {
   const filled = Math.min(ticks, size);
@@ -104,35 +157,40 @@ export function formatCharactersFull(
   inRoomIds: string[],
 ): string {
   if (!chars.length) return "None.";
-  return (chars as unknown as ICharSheetFull[])
+  return chars
     .filter((c) => inRoomIds.includes(c.playerId))
     .map((c) => {
-      const harmCount = markedHarmCount(c.harm);
-      const corrupt = c.corruption.marks;
-      const debts = c.debts.length
-        ? c.debts.map((d) =>
+      if (isSr4Char(c)) return formatSr4CharFull(c, inRoomIds);
+      const u = c as unknown as ICharSheetFull;
+      const harmCount = markedHarmCount(u.harm);
+      const corrupt = u.corruption.marks;
+      const debts = u.debts.length
+        ? u.debts.map((d) =>
           d.direction === "owed" ? `${d.to} owes them` : `owes ${d.to}`
         ).join(", ")
         : "none";
       return [
-        `${c.name} (${c.playbookId})`,
-        `  Stats: blood ${c.stats.blood}  heart ${c.stats.heart}  mind ${c.stats.mind}  spirit ${c.stats.spirit}`,
-        `  Harm: ${harmCount}/5  Armor: ${c.harm.armor}  Corruption: ${corrupt}/5`,
-        `  Circles: mortalis ${c.circleStatus.mortalis}  night ${c.circleStatus.night}  power ${c.circleStatus.power}  wild ${c.circleStatus.wild}`,
+        `${u.name} (${u.playbookId})`,
+        `  Stats: blood ${u.stats.blood}  heart ${u.stats.heart}  mind ${u.stats.mind}  spirit ${u.stats.spirit}`,
+        `  Harm: ${harmCount}/5  Armor: ${u.harm.armor}  Corruption: ${corrupt}/5`,
+        `  Circles: mortalis ${u.circleStatus.mortalis}  night ${u.circleStatus.night}  power ${u.circleStatus.power}  wild ${u.circleStatus.wild}`,
         `  Debts: ${debts}`,
-        `  Moves: ${c.selectedMoves.join(", ") || "none"}`,
-        `  XP: ${c.xp}/5`,
+        `  Moves: ${u.selectedMoves.join(", ") || "none"}`,
+        `  XP: ${u.xp}/5`,
       ].join("\n");
     })
+    .filter(Boolean)
     .join("\n\n");
 }
 
 export function formatCharactersOneLiner(chars: ICharSheet[]): string {
   if (!chars.length) return "None.";
-  return (chars as unknown as ICharSheetFull[])
+  return chars
     .map((c) => {
-      const harmCount = markedHarmCount(c.harm);
-      return `${c.name} (${c.playbookId}) — harm ${harmCount}/5  corruption ${c.corruption.marks}/5`;
+      if (isSr4Char(c)) return formatSr4CharOneLiner(c);
+      const u = c as unknown as ICharSheetFull;
+      const harmCount = markedHarmCount(u.harm);
+      return `${u.name} (${u.playbookId}) — harm ${harmCount}/5  corruption ${u.corruption.marks}/5`;
     })
     .join("\n");
 }

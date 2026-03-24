@@ -57,4 +57,8 @@ export interface IGameSystem extends IStatSystem {
   source: "bundled" | "ingested";
   ingestedFrom?: string[];
   confidence?: Record<string, "high" | "uncertain">;
+
+  // DBO collection holding character sheets for this system.
+  // Undefined = use the value from IGMConfig.charCollection (or "server.playbooks").
+  charCollection?: string;
 }

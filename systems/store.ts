@@ -25,6 +25,7 @@ const StoredGameSystemSchema = z.object({
   missConsequenceHint: z.string(),
   categories: z.array(z.string()),
   statsByCategory: z.record(z.array(z.string())),
+  charCollection: z.string().optional(),
 });
 
 // ─── Serialized form stored in DB ─────────────────────────────────────────────
@@ -46,6 +47,7 @@ export interface IStoredGameSystem {
   // IStatSystem fields serialized
   categories: string[];
   statsByCategory: Record<string, string[]>;
+  charCollection?: string;
 }
 
 export const gmCustomSystems = new DBO<IStoredGameSystem>(
@@ -108,6 +110,7 @@ export async function saveCustomSystem(system: IGameSystem): Promise<void> {
     statsByCategory: Object.fromEntries(
       system.getCategories().map((cat) => [cat, system.getStats(cat)]),
     ),
+    charCollection: system.charCollection,
   };
   const existing = await gmCustomSystems.queryOne({ id: system.id });
   if (existing) {
@@ -160,6 +163,7 @@ export function deserializeSystem(s: IStoredGameSystem): IGameSystem {
       if (!s.stats.includes(stat)) return false;
       return typeof value === "number" && value >= 0;
     },
+    charCollection: s.charCollection,
     // Ingested systems use generic formatters — game admins can refine via setup chat
     formatMoveResult: (
       moveName: string,
@@ -176,6 +180,16 @@ export function deserializeSystem(s: IStoredGameSystem): IGameSystem {
       return `${moveName} (${total}): ${outcome}`;
     },
     formatCharacterContext: (sheet) => {
+      // SR4 chars store stats in `attrs`; generic systems use `data`.
+      const attrs = sheet.attrs as Record<string, number> | undefined;
+      if (attrs) {
+        const lines = [`CHARACTER: ${sheet.name}`];
+        for (const stat of s.stats) {
+          const val = attrs[stat];
+          if (val !== undefined) lines.push(`  ${stat}: ${val}`);
+        }
+        return lines.join("\n");
+      }
       const lines = [`CHARACTER: ${sheet.name}`];
       for (const stat of s.stats) {
         const val = sheet.data?.[stat.toLowerCase()];
