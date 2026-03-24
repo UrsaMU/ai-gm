@@ -9,6 +9,8 @@
 //   - scene:set                 → GM narration draft → private page to staff
 //   - scene:clear               → cache invalidation
 //   - job hooks                 → cache invalidation + job-review graph
+//   - gm:system:register        → peer plugin registers a game system at runtime
+//   - shadowrun:roll            → inject SR4 dice result into open round context
 //   - Periodic timeout sweep    → fires adjudication when timeout expires
 //
 // This module exports a single registerHooks(ctx) function called from index.ts.
@@ -33,9 +35,10 @@ import {
   runScenePageGraph,
   runSceneSetGraph,
 } from "./graphs/index.ts";
-import type { IGMConfig, IGMExchange } from "./schema.ts";
+import type { IGMConfig, IGMExchange, IGMContribution } from "./schema.ts";
 import type { IInjectOptions } from "./context/injector.ts";
-import { getGameSystem as getSystem } from "./systems/index.ts";
+import { getGameSystem as getSystem, registerGameSystem } from "./systems/index.ts";
+import type { ISrRollEvent, ISrSystemRegisterEvent } from "./game-hooks-augment.ts";
 
 // ─── Hook context ─────────────────────────────────────────────────────────────
 
@@ -440,5 +443,105 @@ export function registerHooks(ctx: IHookContext): void {
     timeoutSweep().catch((e) => console.error("[GM] sweep:", e));
   }, SWEEP_INTERVAL_MS);
 
+  // ── gm:system:register ────────────────────────────────────────────────────────
+  // A peer plugin (e.g. shadowrun) emits this event to register a game system
+  // with ai-gm at runtime without requiring a restart.
+
+  gameHooks.on("gm:system:register" as never, (event: unknown) => {
+    const { system } = event as ISrSystemRegisterEvent;
+    if (!system?.id) return;
+    try {
+      // registerGameSystem accepts IGameSystem; ingested systems pass Zod
+      // validation inside deserializeSystem() which is called by loadCustomSystems.
+      // Here we call it directly with the runtime object — functions are re-built
+      // by the store from the serialized fields, so this is structurally safe.
+      // deno-lint-ignore no-explicit-any
+      registerGameSystem(system as any);
+      console.log(`[GM] Game system "${system.id}" registered via gm:system:register.`);
+    } catch (e: unknown) {
+      console.error("[GM] gm:system:register failed:", e);
+    }
+  });
+
+  // ── shadowrun:roll ────────────────────────────────────────────────────────────
+  // Shadowrun plugin emits this after every +roll / +roll/edge.
+  // Inject the result as a note on the roller's round contribution so the
+  // GM LLM sees the mechanical outcome when it adjudicates the round.
+  // If no round is open, store as a gmExchange so it appears in recentExchanges.
+
+  gameHooks.on("shadowrun:roll" as never, async (event: unknown) => {
+    const e = event as ISrRollEvent;
+    if (!ctx.config.watchedRooms.includes(e.roomId)) return;
+
+    const note = formatSrRollNote(e);
+
+    const round = await getOpenRound(e.roomId);
+    if (round && round.status === "open") {
+      await injectRollIntoRound(round.id, e.playerId, note);
+      return;
+    }
+
+    // No open round — log to exchanges so the next round's context includes it.
+    await gmExchanges.create({
+      type: "roll",
+      roomId: e.roomId,
+      playerId: e.playerId,
+      playerName: e.playerName,
+      input: note,
+      output: "",
+      toolsUsed: [],
+      timestamp: Date.now(),
+    } as unknown as Parameters<typeof gmExchanges.create>[0]);
+  });
+
   console.log("[GM] Hooks registered.");
+}
+
+// ─── SR4 roll helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Build a plain-text note describing an SR4 dice roll result.
+ * Plain text (no MUSH codes) — this goes into the LLM system prompt context.
+ */
+function formatSrRollNote(e: ISrRollEvent): string {
+  const edgeTag = e.edgeUsed ? " [Edge]" : "";
+  const hitLine = e.threshold !== undefined
+    ? `${e.hits} hits vs threshold ${e.threshold} — ${e.success ? "SUCCESS" : "FAIL"}`
+    : `${e.hits} hits`;
+
+  const glitchTag = e.critGlitch
+    ? " CRITICAL GLITCH"
+    : e.glitch
+    ? " GLITCH"
+    : "";
+
+  return `[SR4 ROLL${edgeTag}] ${e.playerName}: ${e.pool} dice → ${hitLine}${glitchTag}`;
+}
+
+/**
+ * Append a roll note to a player's contribution poses inside an open round
+ * WITHOUT marking them as ready (a roll is context, not a full pose).
+ */
+async function injectRollIntoRound(
+  roundId: string,
+  playerId: string,
+  note: string,
+): Promise<void> {
+  const round = await gmRounds.queryOne(
+    { id: roundId } as Parameters<typeof gmRounds.queryOne>[0],
+  ) as { id: string; contributions: IGMContribution[] } | null;
+
+  if (!round) return;
+
+  const updated = round.contributions.map((c: IGMContribution): IGMContribution =>
+    c.playerId === playerId
+      ? { ...c, poses: [...c.poses, note] }  // ready stays unchanged
+      : c
+  );
+
+  await gmRounds.modify(
+    { id: roundId } as Parameters<typeof gmRounds.modify>[0],
+    "$set",
+    { contributions: updated },
+  );
 }
